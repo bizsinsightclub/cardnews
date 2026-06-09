@@ -1,0 +1,10 @@
+# OMC 오케스트레이션 로컬 상태
+.omc/
+
+# 브라우저 검증 임시 산출물
+.playwright-mcp/
+*.jpeg
+
+# OS
+Thumbs.db
+.DS_Store
