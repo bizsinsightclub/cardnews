@@ -172,6 +172,7 @@
   .fmt button{all:unset;cursor:pointer;color:#eef3f8;min-width:38px;height:38px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:800;padding:0 9px}
   .fmt button:hover{background:rgba(255,255,255,.16)}
   .fmt button.act{background:var(--sky2);color:#16344a}
+  .fmt button small{font-size:11px;font-weight:700;opacity:.9;margin-left:1px}
   .fmt .u{text-decoration:underline}
   .fmt .sep{width:1px;height:24px;background:rgba(255,255,255,.24);margin:0 4px}
   .fmt .szlabel{font-size:13px;font-weight:700;min-width:40px;justify-content:center;color:#cfe0ee}
@@ -280,8 +281,13 @@
   <button data-cmd="hl-pick" title="하이라이트 색">🎨</button>
   <button data-cmd="color" title="글자색">A<span style="color:#8CC0EB">●</span></button>
   <span class="sep"></span>
-  <button data-cmd="size-down" title="작게">A−</button>
-  <button data-cmd="size-up" title="크게">A+</button>
+  <button data-cmd="size-down" title="글자 작게">A−</button>
+  <button data-cmd="size-up" title="글자 크게">A+</button>
+  <span class="sep"></span>
+  <button data-cmd="ls-down" title="자간 좁게(박스 전체)">AV<small>−</small></button>
+  <button data-cmd="ls-up" title="자간 넓게(박스 전체)">AV<small>+</small></button>
+  <button data-cmd="lh-down" title="줄간격 좁게(박스 전체)">≡<small>−</small></button>
+  <button data-cmd="lh-up" title="줄간격 넓게(박스 전체)">≡<small>+</small></button>
   <span class="sep"></span>
   <button data-cmd="clear" title="서식 지우기">⌫</button>
 </div>
@@ -456,6 +462,8 @@ function buildBlock(sl,b,slideEl){
   wrap.style.left=b.x+'px'; wrap.style.top=b.y+'px'; if(b.w) wrap.style.width=b.w+'px';
   const ed=document.createElement('div'); ed.className='ed '+b.type; ed.contentEditable='false'; ed.innerHTML=b.html;
   if(b.fontPx) ed.style.fontSize=b.fontPx+'px';
+  if(b.letterSpacing!=null) ed.style.letterSpacing=b.letterSpacing+'em';
+  if(b.lineHeight!=null) ed.style.lineHeight=b.lineHeight;
   if(b.bg){ ed.style.background=b.bg; ed.querySelectorAll('.vscol').forEach(v=>v.style.background=b.bg); }
   ed.addEventListener('input',()=>{ b.html=ed.innerHTML; if(selBlk===wrap) positionBlockBar(); save(); });
   wrap.appendChild(ed);
@@ -561,8 +569,26 @@ function curEd(){ return lastRange?inEd(lastRange.commonAncestorContainer):null;
 function syncEd(){ const ed=curEd(); if(ed){ const b=findBlock(ed); if(b){ b.html=ed.innerHTML; save(); } } }
 function findBlock(ed){ const w=ed.closest('.blk'); if(!w)return null; const sl=curSlide(); return sl.blocks.find(b=>b.id===w.dataset.bid); }
 fmt.addEventListener('mousedown',e=>e.preventDefault());
+function adjustBoxStyle(prop,delta){
+  const ed=curEd(); if(!ed) return; const b=findBlock(ed); if(!b) return;
+  if(prop==='ls'){
+    let cur=b.letterSpacing;
+    if(cur==null){ const c=getComputedStyle(ed).letterSpacing; const fs=parseFloat(getComputedStyle(ed).fontSize)||1; cur=(c==='normal'?0:(parseFloat(c)||0)/fs); }
+    cur=Math.max(-0.1,Math.min(0.5,Math.round((cur+delta)*1000)/1000));
+    b.letterSpacing=cur; ed.style.letterSpacing=cur+'em';
+  } else if(prop==='lh'){
+    let cur=b.lineHeight;
+    if(cur==null){ const lh=parseFloat(getComputedStyle(ed).lineHeight)||0, fs=parseFloat(getComputedStyle(ed).fontSize)||1; cur=lh/fs; }
+    cur=Math.max(0.8,Math.min(3,Math.round((cur+delta)*100)/100));
+    b.lineHeight=cur; ed.style.lineHeight=cur;
+  }
+  save();
+}
 fmt.addEventListener('click',e=>{
-  const cmd=e.target.closest('button')?.dataset.cmd; if(!cmd)return; restore(); document.execCommand('styleWithCSS',false,true);
+  const cmd=e.target.closest('button')?.dataset.cmd; if(!cmd)return;
+  if(cmd==='ls-down'||cmd==='ls-up'){ adjustBoxStyle('ls',cmd==='ls-up'?0.01:-0.01); updateFmt(); return; }
+  if(cmd==='lh-down'||cmd==='lh-up'){ adjustBoxStyle('lh',cmd==='lh-up'?0.1:-0.1); updateFmt(); return; }
+  restore(); document.execCommand('styleWithCSS',false,true);
   if(cmd==='bold'||cmd==='italic'||cmd==='underline') document.execCommand(cmd,false,null);
   else if(cmd==='hl-theme') document.execCommand('hiliteColor',false,'rgba(140,192,235,0.7)');
   else if(cmd==='hl-pick'){ openPalette({title:'하이라이트 색',anchor:e.target,initial:'#8CC0EB',onPick:v=>{ restore(); document.execCommand('styleWithCSS',false,true); document.execCommand('hiliteColor',false,v); syncEd(); }}); return; }
