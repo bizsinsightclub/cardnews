@@ -457,8 +457,10 @@
     padding:14px 16px; font-family:var(--font); font-size:13.5px;
     line-height:1.7; color:var(--ui-ink); background:#fff;
   }
-  .paste-foot{ display:flex; align-items:center; gap:10px; padding:12px 16px; border-top:1px solid var(--ui-border); }
+  .paste-foot{ display:flex; align-items:center; gap:10px; padding:12px 16px; border-top:1px solid var(--ui-border); flex-wrap:wrap; }
   .paste-hint{ font-size:11.5px; color:var(--ui-mute); line-height:1.5; }
+  .paste-check{ display:flex; align-items:center; gap:6px; font-size:12.5px; font-weight:600; color:var(--ui-ink); white-space:nowrap; cursor:pointer; }
+  .paste-check input{ accent-color:var(--ui-accent); }
 
   /* ===== 토스트 ===== */
   .toast{
@@ -493,6 +495,7 @@
     <button class="btn" id="homeBtn">📁 내 작업</button>
     <button class="btn" id="verBtn">🕘 버전</button>
     <button class="btn" id="pasteBtn">📋 텍스트로 만들기</button>
+    <button class="btn" id="outroBtn" title="'저장해두고 꺼내 보세요' 마무리 카드를 맨 뒤에 추가 (일반 카드처럼 편집 가능)">🔖 마무리 카드</button>
     <div class="spacer"></div>
     <button class="btn" id="editToggle">✏️ 편집 모드</button>
     <button class="btn" id="prev">← 이전</button>
@@ -629,6 +632,7 @@
       <div class="paste-foot">
         <span class="paste-hint">붙여넣은 뒤 버튼을 누르면 카드가 자동 배치되고, 넘치는 카드는 글자 크기를 자동으로 맞춥니다.<br>💡 <b>🤖 AI 프롬프트 복사</b> → ChatGPT·Gemini·Claude에 원고와 함께 붙여넣기 → 결과를 이 창에 붙여넣기</span>
         <div class="spacer"></div>
+        <label class="paste-check" title="'저장해두고 꺼내 보세요' 저장 유도 카드를 맨 뒤에 자동으로 붙입니다"><input type="checkbox" id="pasteOutro" checked> 🔖 마무리 카드</label>
         <button class="btn" id="pasteReplace" title="현재 문서를 이 내용으로 교체 (교체 전 자동 백업)">현재 문서에 덮어쓰기</button>
         <button class="btn primary" id="pasteNew">새 문서로 만들기</button>
       </div>
@@ -2780,7 +2784,18 @@ function emphasizeNums(s){
 }
 
 function buildCoverFromText(paras){
-  const flat = paras.map(p=>p.replace(/\n/g,' ')).join(' ').replace(/\s+/g,' ').trim();
+  const escLines = p => p.split('\n').map(s=>s.trim()).filter(Boolean).map(escapeHtml).join('<br>');
+  // 문단이 2개 이상: 첫 문단 = 헤드라인, 나머지 = 부제 (원고의 줄바꿈·이모지 보존)
+  if(paras.length >= 2){
+    return { q: escLines(paras[0]), sub: paras.slice(1).map(escLines).join('<br><br>') };
+  }
+  // 한 문단 여러 줄: 첫 줄 = 헤드라인, 나머지 줄 = 부제
+  const lines = (paras[0] || '').split('\n').map(s=>s.trim()).filter(Boolean);
+  if(lines.length >= 2){
+    return { q: escapeHtml(lines[0]), sub: lines.slice(1).map(escapeHtml).join('<br>') };
+  }
+  // 한 줄뿐: 문장·쉼표 분리 폴백
+  const flat = lines.join(' ');
   const sents = flat.match(/[^.?!]+[.?!]?/g) || [flat];
   let q = (sents[0] || '').trim();
   let sub = sents.slice(1).join(' ').trim();
@@ -2792,21 +2807,21 @@ function buildCoverFromText(paras){
 }
 
 function buildBodyCardFromText(paras){
-  let title = '';
+  let title = '';                                   // 이미 escape된 HTML (2줄 제목은 <br> 포함)
   const rest = paras.slice();
-  // 제목 후보: 첫 문단(짧으면 통째) 또는 첫 문단의 첫 줄
+  // 제목 후보: 첫 문단이 1~2줄이고 짧으면 통째(줄바꿈 유지), 아니면 첫 줄만
   if(rest.length){
-    const flatFirst = rest[0].replace(/\n/g,' ').trim();
-    if(flatFirst.length <= 34 && rest.length > 1){
-      title = flatFirst; rest.shift();
-    } else {
-      const lns = rest[0].split('\n');
-      if(lns.length > 1 && lns[0].trim().length <= 34){
-        title = lns[0].trim();
-        rest[0] = lns.slice(1).join('\n');
-      } else if(rest.length === 1 && flatFirst.length <= 34){
-        title = flatFirst; rest.shift();
-      }
+    const firstLines = rest[0].split('\n').map(s=>s.trim()).filter(Boolean);
+    const flatLen = firstLines.join(' ').length;
+    if(rest.length > 1 && firstLines.length <= 2 && flatLen <= 34){
+      title = firstLines.map(escapeHtml).join('<br>');
+      rest.shift();
+    } else if(firstLines.length > 1 && firstLines[0].length <= 34){
+      title = escapeHtml(firstLines[0]);
+      rest[0] = firstLines.slice(1).join('\n');
+    } else if(rest.length === 1 && flatLen <= 34){
+      title = firstLines.map(escapeHtml).join('<br>');
+      rest.shift();
     }
   }
   const html = [];
@@ -2826,7 +2841,7 @@ function buildBodyCardFromText(paras){
     for(const rawLn of p.split('\n')){
       const ln = rawLn.trim();
       if(!ln) continue;
-      const cm = /^([✔✅☑✓●▪◦•💗🔖📈📉]|[-*])️?\s+(.+)$/u.exec(ln);
+      const cm = /^([✔✅☑✓●▪◦•💗🔖📈📉🔹🔸▶]|[-*])️?\s+(.+)$/u.exec(ln);
       if(cm){
         flushText();
         const mk = /^[-*]$/.test(cm[1]) ? '✔' : cm[1];
@@ -2834,7 +2849,7 @@ function buildBodyCardFromText(paras){
         continue;
       }
       flushChecks();
-      if(/^※/.test(ln)){
+      if(/^[※→↳⇒]/.test(ln)){                      // 출처·주의·부연 화살표 → 작은 회색 주석
         flushText();
         html.push(`<div class="note${mtOf()}"><span class="mute">${emphasizeNums(escapeHtml(ln))}</span></div>`);
         first = false;
@@ -2845,13 +2860,19 @@ function buildBodyCardFromText(paras){
     flushText(); flushChecks();     // 문단 경계에서 버퍼 확정
   }
   flushText(); flushChecks();
-  return { eyebrow: escapeHtml(title), body: html.join('\n') };
+  return { eyebrow: title, body: html.join('\n') };
 }
 
 function textToDoc(raw){
   const blocks = splitCardBlocks(raw);
   if(!blocks.length) return null;
   const d = newDocFromTemplate();               // 브랜드·핸들 등 템플릿 상속
+  // 맨 앞의 짧은 머리글 한 줄("OHSS 2편" 등)은 표지가 아니라 문서 제목으로 흡수
+  if(blocks.length >= 2 && blocks[0].length === 1
+     && !blocks[0][0].includes('\n') && blocks[0][0].length <= 20){
+    d.meta.title = blocks[0][0].trim();
+    blocks.shift();
+  }
   const cover = buildCoverFromText(blocks[0]);
   d.cover.q = cover.q;
   d.cover.sub = cover.sub;
@@ -2861,6 +2882,31 @@ function textToDoc(raw){
   d.theme = { global:{}, cards:{} };
   return migrateDoc(d);
 }
+
+/* --- 마무리(저장 유도) 카드 — 시드 마지막 카드("📌 저장해두고 꺼내 보세요") 재사용 --- */
+function outroCard(){
+  const t = JSON.parse(TEMPLATE_JSON);
+  return t.cards[t.cards.length - 1];
+}
+function hasOutro(cardsArr){
+  const last = cardsArr[cardsArr.length - 1];
+  return !!(last && /저장해두고/.test(last.eyebrow || ''));
+}
+function appendOutroCard(){
+  if(hasOutro(DOC.cards)){
+    idx = TOTAL - 1;
+    show(idx);
+    toast('이미 마무리 카드가 있어요 — 여기서 바로 수정할 수 있어요');
+    return;
+  }
+  DOC.cards.push(outroCard());
+  migrateDoc(DOC);                                  // images/floats 길이 정규화
+  idx = DOC.cards.length;                           // 새 마지막 카드로 이동
+  renderDeck();
+  markDirty();
+  toast('마무리 카드를 추가했어요 — 일반 카드처럼 편집할 수 있어요');
+}
+document.getElementById('outroBtn').addEventListener('click', appendOutroCard);
 
 /* --- 오토핏: 카드 내용이 넘치면 본문 글자 비율 축소 (저장까지 반영) --- */
 function autoFitCard(i){
@@ -2914,15 +2960,16 @@ const LLM_PROMPT = `당신은 병원·약국 SNS 카드뉴스 편집자입니다
 출력 규칙 (반드시 그대로 지켜주세요):
 1. 코드블록·마크다운·번호 매기기 없이 일반 텍스트로만 출력합니다.
 2. 카드와 카드 사이는 "⸻" 기호 한 줄로 구분합니다.
-3. 첫 카드는 표지입니다: 호기심을 끄는 한 문장 헤드라인(쉼표로 끊어도 좋음), 줄바꿈 후 부제 1문장.
-4. 이후 각 카드는
-   - 첫 줄: 카드 제목 (30자 이내, 질문형 환영)
-   - 다음 줄부터: 본문 (한 줄 40자 이내로 줄바꿈, 카드당 300자 이내)
-5. 나열·항목은 줄 맨 앞에 "✔ "를 붙입니다 (한 카드에 최대 5개).
-6. 출처·주의·부가 설명은 줄 맨 앞에 "※ "를 붙입니다.
-7. 마지막 카드는 "📌 결론" 제목으로 핵심 요약과 독자 행동 유도 1줄을 넣습니다.
-8. 숫자·통계는 단위와 함께 그대로 보존합니다 (예: 1.23mm, 약 2배 — 자동으로 강조됩니다).
-9. 원고에 없는 사실을 만들지 마세요. 전체 분량은 표지 포함 4~8카드.
+3. 원고가 이미 카드(페이지)로 나뉘어 있으면 그 구분·표현·이모지·줄바꿈을 최대한 그대로 살리고, 재구성은 최소화합니다.
+4. 첫 카드는 표지입니다: 호기심을 끄는 헤드라인(1~2줄, 쉼표로 끊어도 좋음), 빈 줄 하나, 부제 1~2문장.
+5. 이후 각 카드는
+   - 첫 줄(필요하면 두 줄): 카드 제목 — 어울리는 이모지 1개 + 30자 이내, 질문형 환영
+   - 본문: 의미 단위로 짧게 줄바꿈합니다 (한 줄 8~18자). 문단 사이에는 빈 줄 하나. 카드당 250자 이내.
+6. 원고에 있는 이모지(💊 💉 ⚠️ ❄️ 등)는 지우지 말고 해당 문장과 함께 유지하고, 밋밋한 문장에는 새 이모지를 적절히 더합니다.
+7. 나열·항목은 줄 맨 앞에 "✔ " (한 카드 최대 5개). 부연 화살표는 "→ "로 시작. "※ "는 출처·주의 문구에만 쓰고 일반 본문에는 쓰지 않습니다.
+8. 마지막 카드는 "📌 결론" 또는 "📌 기억하세요" 제목으로 핵심 요약 + 독자 행동 유도 1줄.
+9. 숫자·통계는 단위와 함께 그대로 보존합니다 (예: 1.23mm, 약 2배 — 자동으로 강조됩니다).
+10. 원고에 없는 사실을 만들지 마세요. 전체 분량은 표지 포함 4~9카드.
 
 [원고]
 (여기에 원고를 붙여넣으세요)`;
@@ -2961,6 +3008,11 @@ async function generateFromText(mode){
   if(!raw.trim()){ toast('텍스트를 먼저 붙여넣어 주세요'); return; }
   const doc = textToDoc(raw);
   if(!doc || !doc.cards.length){ toast('카드로 나눌 내용을 찾지 못했어요'); return; }
+  // 🔖 마무리 카드 자동 추가 (이미 있으면 중복 방지)
+  if(document.getElementById('pasteOutro').checked && !hasOutro(doc.cards)){
+    doc.cards.push(outroCard());
+    migrateDoc(doc);
+  }
   if(mode === 'new'){
     await saveDoc();
     DOC = doc;
