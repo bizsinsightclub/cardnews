@@ -30,7 +30,8 @@ jobs:
       - name: Upload site artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          # 저장소 루트 전체를 정적 사이트로 배포 (index.html 진입점)
+          # 저장소 루트 전체를 정적 사이트로 배포
+          # 진입점: index.html (v3 에디터) · 구형 에디터: legacy/index.html
           path: '.'
 
       - name: Deploy to GitHub Pages
