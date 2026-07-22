@@ -207,6 +207,8 @@
   .gold{ color:var(--gold); font-weight:700; }
   .iv{ color:var(--ivory); font-weight:700; }
   .mute{ color:var(--mute); }
+  .red{ color:var(--red); font-weight:700; }
+  .green{ color:var(--green); font-weight:700; }
   .mt-s{ margin-top:18px; }
   .mt-m{ margin-top:34px; }
   .mt-l{ margin-top:54px; }
@@ -670,9 +672,10 @@ function renderDeck(){
   cards = [...deck.querySelectorAll('.card')];
   // 편집 리스너·contenteditable 재바인딩
   deck.querySelectorAll('[data-edit]').forEach(el=>{
-    el.addEventListener('input', ()=>writeBack(el));
+    el.addEventListener('input', ()=>{ writeBack(el); noteTyping(el); });
     el.setAttribute('contenteditable', editing ? 'true' : 'false');
   });
+  resetUndo();                                   // 문서 전환·복원 시 undo 이력 초기화
   for(let i=0;i<TOTAL;i++) loadNat(i);
   show(Math.max(0, Math.min(idx, TOTAL-1)));
 }
@@ -747,36 +750,44 @@ function useSaved(){
 }
 
 /* =========================================================
-   서식 적용 — 덮어쓰기(clean replace) 방식
-   · 크기(size) : font-size·굵기만 인라인 적용(색·줄간격은 문단에 맡김)
-   · 강조(color): 색/굵기 클래스만 인라인 적용
-   같은 종류를 다시 적용하면 이전 서식을 먼저 벗겨내므로,
-   크기를 되돌리면 문단의 원래 줄간격으로 복귀합니다.
+   서식 엔진 (run 기반) — "파싱 → 배열 변환 → 최소 HTML 직렬화"
+   · 서식 적용 시점에만 문단의 인라인 콘텐츠를 run(동일 스타일 구간) 배열로
+     파싱하고, 순수 배열 연산으로 변환한 뒤 최소 HTML로 재직렬화한다.
+   · 타이핑은 일반 contenteditable 그대로 (한글 IME·캐럿 무영향).
+   · 규칙: line-height는 절대 스팬에 쓰지 않는다(문단 블록 전용, unitless).
+   · 미지의 클래스/속성을 가진 요소·맨 span(.chk 플렉스 래퍼 등)은
+     '구조 컨테이너'로 원형 보존한다 (run이 chain으로 소속을 기억).
    ========================================================= */
 // 시스템 프리셋 값 (템플릿 타이포와 동일: [font-size px, font-weight])
 const SIZE_MAP = { display:[140,800], h1:[84,800], h2:[58,700], lead:[50,600], body:[44,400], note:[34,400] };
+// PPT식 크기 사다리 (가▲/가▼ 스테퍼)
+const SIZE_LADDER = [24,28,32,36,40,44,50,58,66,76,84,104,120,140,160];
 
-// 선택이 속한 '줄(문단) 블록' 찾기 — 호스트 아래 가장 바깥쪽 DIV
-function nearestLineBlock(node, host){
+const RT_TOKENS = ['gold','iv','mute','red','green'];      // 색 토큰 → 클래스 직렬화(테마 반응)
+const RT_TAGSTYLE = { B:{fw:700}, STRONG:{fw:700}, I:{it:true}, EM:{it:true},
+                      U:{un:true}, S:{st:true}, STRIKE:{st:true}, DEL:{st:true} };
+const RT_EMPTY = { fs:null, fw:null, it:false, un:false, st:false, color:null, hl:null, ls:null };
+
+// 문단 블록: 노드에서 위로 올라가며 만나는 '가장 안쪽' DIV (없으면 호스트)
+function paraOf(node, host){
   let el = node.nodeType === 3 ? node.parentNode : node;
-  let last = null;
   while(el && el !== host){
-    if(el.tagName === 'DIV') last = el;
+    if(el.nodeType === 1 && el.tagName === 'DIV') return el;
     el = el.parentNode;
   }
-  return last || host;
+  return host;
 }
 
-// 호스트 시작부터 (container,offset)까지의 글자수
-function charOffset(host, container, offset){
+// 기준 요소 시작부터 (container,offset)까지의 글자수
+function charOffset(base, container, offset){
   const r = document.createRange();
-  r.setStart(host, 0);
+  r.setStart(base, 0);
   r.setEnd(container, offset);
   return r.toString().length;
 }
 // 글자수 위치로 Range 복원(텍스트 노드 기준)
-function rangeFromOffsets(host, start, end){
-  const w = document.createTreeWalker(host, NodeFilter.SHOW_TEXT);
+function rangeFromOffsets(base, start, end){
+  const w = document.createTreeWalker(base, NodeFilter.SHOW_TEXT);
   let pos = 0, n, sN = null, sO = 0, eN = null, eO = 0;
   while((n = w.nextNode())){
     const len = n.nodeValue.length;
@@ -784,82 +795,381 @@ function rangeFromOffsets(host, start, end){
     if(end <= pos + len){ eN = n; eO = Math.max(0, end - pos); break; }
     pos += len;
   }
-  if(!sN){ sN = host; sO = host.childNodes.length; }
-  if(!eN){ eN = host; eO = host.childNodes.length; }
+  if(!sN){ sN = base; sO = base.childNodes.length; }
+  if(!eN){ eN = base; eO = base.childNodes.length; }
   const r = document.createRange();
   r.setStart(sN, sO); r.setEnd(eN, eO);
   return r;
 }
-function unwrapSpan(sp){
-  const p = sp.parentNode; if(!p) return;
-  while(sp.firstChild) p.insertBefore(sp.firstChild, sp);
-  p.removeChild(sp);
+
+// 선택이 걸친 문단 목록 + 문단별 [start,end) 로컬 글자 오프셋
+function parasInRange(range, host){
+  const w = document.createTreeWalker(host, NodeFilter.SHOW_TEXT);
+  const list = []; const seen = new Set();
+  let n;
+  while((n = w.nextNode())){
+    if(!n.nodeValue.trim()) continue;              // 공백뿐인 노드(템플릿 들여쓰기)는 문단 탐색에서 제외
+    if(!range.intersectsNode(n)) continue;
+    const p = paraOf(n, host);
+    if(!seen.has(p)){ seen.add(p); list.push(p); }
+  }
+  // 중첩 제거: 수집된 다른 문단 안에 포함된 문단은 바깥 것만 남김
+  const outer = list.filter(p => !list.some(q => q !== p && q.contains(p)));
+  return outer.map(p=>{
+    const full = p.textContent.length;
+    let s = 0, e = full;
+    if(p === range.startContainer || p.contains(range.startContainer))
+      s = charOffset(p, range.startContainer, range.startOffset);
+    if(p === range.endContainer || p.contains(range.endContainer))
+      e = charOffset(p, range.endContainer, range.endOffset);
+    s = Math.max(0, Math.min(s, full)); e = Math.max(0, Math.min(e, full));
+    return { el:p, start:s, end:e };
+  }).filter(p => p.end > p.start);   // 경계만 스친 문단 제외 (인접 서식 보호)
 }
 
-// 공통: 선택과 겹치는 기존 서식 span(감싸는 것 포함)을 모두 벗긴 뒤 다시 적용
-function fmtSelection(makeFn, stripTypes){
+/* --- 파싱: 요소의 인식 가능한 스타일 기여 추출 --- */
+function cssColorToToken(val){
+  const m = /^var\(--(gold|ivory|mute|red|green)\)$/.exec((val||'').trim());
+  if(m) return m[1] === 'ivory' ? 'iv' : m[1];
+  return val;                                   // hex/rgb 등은 원문 그대로
+}
+function styleCtxFromEl(el){
+  const p = {};
+  const tag = RT_TAGSTYLE[el.tagName];
+  if(tag) Object.assign(p, tag);
+  for(const c of el.classList){ if(RT_TOKENS.includes(c)) p.color = c; }
+  const s = el.style;
+  for(let i=0;i<s.length;i++){
+    const prop = s[i], val = s.getPropertyValue(prop);
+    if(prop === 'font-size'){
+      const m = /^([\d.]+)px$/.exec(val);
+      if(m) p.fs = parseFloat(m[1]); else p._impure = true;
+    }
+    else if(prop === 'font-weight'){
+      const n = val === 'bold' ? 700 : val === 'normal' ? 400 : parseInt(val,10);
+      if(n) p.fw = n; else p._impure = true;
+    }
+    else if(prop === 'font-style'){ if(val === 'italic') p.it = true; }
+    else if(prop === 'text-decoration' || prop === 'text-decoration-line'){
+      if(/underline/.test(val)) p.un = true;
+      if(/line-through/.test(val)) p.st = true;
+    }
+    else if(prop === 'color'){ p.color = cssColorToToken(val); }
+    else if(prop === 'background-color'){ p.hl = val; }
+    else if(prop === 'letter-spacing'){ p.ls = val; }
+    else if(prop === 'line-height'){ /* 스팬 줄간격은 의도적으로 폐기 — 문단 전용 */ }
+    else p._impure = true;
+  }
+  return p;
+}
+// '순수 스타일 요소'(파싱 시 흡수 가능) 판정
+function isPureStyleEl(el){
+  const tn = el.tagName;
+  if(!RT_TAGSTYLE[tn] && tn !== 'SPAN') return false;
+  for(const a of el.attributes){
+    if(!['class','style','data-fmt','data-size'].includes(a.name)) return false;
+  }
+  for(const c of el.classList){ if(!RT_TOKENS.includes(c)) return false; }
+  if(styleCtxFromEl(el)._impure) return false;
+  // 클래스도 스타일도 없는 맨 span은 구조 보존 (.chk 플렉스 래퍼 등 레이아웃 의미 가능)
+  if(tn === 'SPAN' && el.classList.length === 0 && el.style.length === 0) return false;
+  return true;
+}
+
+/* --- 파싱: 문단 → run 배열 --- */
+function parseRuns(para){
+  const runs = [];
+  (function walk(node, ctx, chain){
+    node.childNodes.forEach(child=>{
+      if(child.nodeType === 3){
+        if(child.nodeValue) runs.push(Object.assign({ text:child.nodeValue, chain }, RT_EMPTY, ctx));
+        return;
+      }
+      if(child.nodeType !== 1) return;
+      if(child.tagName === 'BR'){ runs.push({ br:true, chain }); return; }
+      const hasText = child.textContent.length > 0 || !!child.querySelector('br');
+      if(isPureStyleEl(child)){
+        const p = styleCtxFromEl(child); delete p._impure;
+        walk(child, Object.assign({}, ctx, p), chain);
+      } else if(!hasText){
+        runs.push({ atom: child.outerHTML, chain });     // 빈 요소·이미지 등 원형 보존
+      } else {
+        walk(child, ctx, chain.concat([child]));         // 구조 컨테이너: 소속만 기억
+      }
+    });
+  })(para, {}, []);
+  return runs;
+}
+
+/* --- 변환: 순수 배열 연산 --- */
+function splitAt(runs, off){
+  let pos = 0;
+  for(let i=0;i<runs.length;i++){
+    const r = runs[i], len = (r.br || r.atom) ? 0 : r.text.length;
+    if(pos === off) return i;
+    if(pos + len > off){
+      const a = Object.assign({}, r, { text: r.text.slice(0, off-pos) });
+      const b = Object.assign({}, r, { text: r.text.slice(off-pos) });
+      runs.splice(i, 1, a, b);
+      return i + 1;
+    }
+    pos += len;
+  }
+  return runs.length;
+}
+function patchRange(runs, start, end, patch){
+  const i0 = splitAt(runs, start), i1 = splitAt(runs, end);
+  for(let i=i0;i<i1;i++){
+    const r = runs[i];
+    if(r.br || r.atom) continue;
+    Object.assign(r, (typeof patch === 'function') ? patch(r) : patch);
+  }
+  return mergeRuns(runs);
+}
+function mergeRuns(runs){
+  const out = [];
+  for(const r of runs){
+    const p = out[out.length-1];
+    if(p && !p.br && !r.br && !p.atom && !r.atom && p.chain === r.chain
+       && p.fs===r.fs && p.fw===r.fw && p.it===r.it && p.un===r.un && p.st===r.st
+       && p.color===r.color && p.hl===r.hl && p.ls===r.ls){
+      p.text += r.text;
+    } else out.push(r);
+  }
+  return out;
+}
+
+/* --- 직렬화: run 배열 → 최소 HTML (중첩 스팬·스팬 line-height 없음) --- */
+function escapeHtml(s){ return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function runHtml(r){
+  if(r.br) return '<br>';
+  if(r.atom) return r.atom;
+  const cls = [], st = [];
+  if(r.color && RT_TOKENS.includes(r.color)) cls.push(r.color);
+  else if(r.color) st.push('color:' + r.color);
+  if(r.fs != null) st.push('font-size:' + r.fs + 'px');
+  if(r.fw != null) st.push('font-weight:' + r.fw);
+  if(r.it) st.push('font-style:italic');
+  const deco = [];
+  if(r.un) deco.push('underline');
+  if(r.st) deco.push('line-through');
+  if(deco.length) st.push('text-decoration:' + deco.join(' '));
+  if(r.hl) st.push('background-color:' + r.hl);
+  if(r.ls) st.push('letter-spacing:' + r.ls);
+  const txt = escapeHtml(r.text);
+  if(!cls.length && !st.length) return txt;
+  return '<span' + (cls.length ? ' class="'+cls.join(' ')+'"' : '')
+                 + (st.length ? ' style="'+st.join(';')+'"' : '') + '>' + txt + '</span>';
+}
+function openTagOf(el){
+  const c = el.cloneNode(false);
+  const o = c.outerHTML, close = '</' + c.tagName.toLowerCase() + '>';
+  return o.endsWith(close) ? o.slice(0, o.length - close.length) : o;
+}
+function serializeRuns(runs){
+  let html = '';
+  let open = [];                                   // 현재 열린 구조 컨테이너 스택
+  for(const r of runs){
+    const chain = r.chain || [];
+    let k = 0;
+    while(k < open.length && k < chain.length && open[k] === chain[k]) k++;
+    for(let i=open.length-1;i>=k;i--) html += '</' + open[i].tagName.toLowerCase() + '>';
+    open = open.slice(0, k);
+    for(let i=k;i<chain.length;i++){ html += openTagOf(chain[i]); open.push(chain[i]); }
+    html += runHtml(r);
+  }
+  for(let i=open.length-1;i>=0;i--) html += '</' + open[i].tagName.toLowerCase() + '>';
+  return html;
+}
+
+/* --- 적용 진입점 (인라인 서식) --- */
+function applyInline(patch){
   if(!editing){ toast('편집 모드를 먼저 켜세요'); return; }
   const sel = useSaved();
   if(!sel || !sel.rangeCount){ toast('글자를 드래그해 선택하세요'); return; }
   const range = sel.getRangeAt(0);
   if(range.collapsed){ toast('수정할 글자를 먼저 선택하세요'); return; }
-  const host = editableHost(range.startContainer);
-  if(!host){ toast('편집 가능한 글자를 선택하세요'); return; }
-  if(nearestLineBlock(range.startContainer, host) !== nearestLineBlock(range.endContainer, host)){
-    toast('한 문단(줄) 안에서 선택해 주세요'); return;
+  const hostS = editableHost(range.startContainer);
+  const hostE = editableHost(range.endContainer);
+  if(!hostS || hostS !== hostE){ toast('편집 가능한 한 영역 안에서 선택해 주세요'); return; }
+  const host = hostS;
+  const paras = parasInRange(range, host);
+  if(!paras.length){ toast('수정할 글자를 먼저 선택하세요'); return; }
+
+  commitTyping();                                  // 타이핑 undo 단위 확정
+  const before = host.innerHTML;
+  for(const p of paras){
+    p.el.innerHTML = serializeRuns(patchRange(parseRuns(p.el), p.start, p.end, patch));
   }
-
-  // 1) 선택 위치를 '글자수'로 기억 (span을 벗겨도 글자수는 안 변하므로 안전)
-  const start = charOffset(host, range.startContainer, range.startOffset);
-  const end   = charOffset(host, range.endContainer,   range.endOffset);
-  if(start >= end){ toast('수정할 글자를 먼저 선택하세요'); return; }
-
-  // 2) 선택과 겹치는 같은 종류의 서식 span을 모두 벗김 (바깥에서 감싸는 것도 포함)
-  const targets = [...host.querySelectorAll('span[data-fmt]')].filter(sp =>
-    stripTypes.includes(sp.dataset.fmt) && range.intersectsNode(sp));
-  targets.forEach(unwrapSpan);
-  host.normalize();
-
-  // 3) 같은 글자 범위를 다시 잡아 새 서식으로 감싸기
-  const r = rangeFromOffsets(host, start, end);
-  if(makeFn){
-    const span = makeFn();
-    try{ r.surroundContents(span); }
-    catch(_){ const f = r.extractContents(); span.appendChild(f); r.insertNode(span); }
-    const rr = document.createRange(); rr.selectNodeContents(span);
-    sel.removeAllRanges(); sel.addRange(rr); savedRange = rr.cloneRange();
-  } else {
-    sel.removeAllRanges(); sel.addRange(r); savedRange = r.cloneRange();
+  const after = host.innerHTML;
+  if(before !== after){
+    pushUndo({ path: host.dataset.edit, before, after });
+    lastCommitted.set(host.dataset.edit, after);
   }
-  savedHost = host;
+  // 같은 글자 범위로 선택 복원
+  const first = paras[0], last = paras[paras.length-1];
+  const rs = rangeFromOffsets(first.el, first.start, first.start);
+  const re = rangeFromOffsets(last.el, last.end, last.end);
+  const nr = document.createRange();
+  nr.setStart(rs.startContainer, rs.startOffset);
+  nr.setEnd(re.endContainer, re.endOffset);
+  sel.removeAllRanges(); sel.addRange(nr);
+  savedRange = nr.cloneRange(); savedHost = host;
   writeBack(host);
+  updateFmtState();
 }
 
-// 크기·굵기 적용 (색·줄간격은 문단에 맡김 → 되돌리면 원래 간격으로 복귀)
+/* --- 적용 진입점 (문단 블록 서식: 정렬·줄간격·자간) --- */
+function blockTargets(){
+  if(!editing){ toast('편집 모드를 먼저 켜세요'); return null; }
+  const sel = useSaved();
+  if(!sel || !sel.rangeCount){ toast('문단을 먼저 클릭하세요'); return null; }
+  const range = sel.getRangeAt(0);
+  const host = editableHost(range.startContainer);
+  if(!host){ toast('편집 가능한 문단을 클릭하세요'); return null; }
+  let paras;
+  if(range.collapsed){
+    let p = paraOf(range.startContainer, host);
+    paras = [p];
+  } else {
+    paras = parasInRange(range, host).map(p=>p.el);
+    if(!paras.length) paras = [paraOf(range.startContainer, host)];
+  }
+  // 호스트 직속 서식은 writeBack(innerHTML만 저장)에서 유실 → 내용 전체를 div로 감싼 뒤 적용
+  paras = paras.map(p=>{
+    if(p !== host) return p;
+    const wrap = document.createElement('div');
+    wrap.dataset.line = '';
+    while(host.firstChild) wrap.appendChild(host.firstChild);
+    host.appendChild(wrap);
+    return wrap;
+  });
+  return { host, paras };
+}
+function applyBlockStyle(fn){
+  const t = blockTargets(); if(!t) return;
+  commitTyping();
+  const before = t.host.innerHTML;
+  t.paras.forEach(fn);
+  const after = t.host.innerHTML;
+  if(before !== after){
+    pushUndo({ path: t.host.dataset.edit, before, after });
+    lastCommitted.set(t.host.dataset.edit, after);
+  }
+  writeBack(t.host);
+  updateFmtState();
+}
+
+/* --- 크기 프리셋·스테퍼·강조·서식 지우기 --- */
 function applySize(name){
   const v = SIZE_MAP[name]; if(!v) return;
-  fmtSelection(()=>{
-    const s = document.createElement('span');
-    s.dataset.fmt = 'size';
-    s.dataset.size = name;
-    s.style.fontSize = v[0] + 'px';
-    s.style.fontWeight = v[1];
-    return s;
-  }, ['size']);
+  applyInline({ fs: v[0], fw: v[1] });
+}
+function applyColor(cls){ applyInline({ color: cls }); }
+function clearFormat(){ applyInline(Object.assign({}, RT_EMPTY)); }
+function blockBasePx(el){
+  const v = parseFloat(getComputedStyle(el).fontSize);
+  return isNaN(v) ? 44 : v;
+}
+function stepFontSize(dir){
+  applyInline(r=>{
+    // run별 현재 크기에서 사다리 한 칸 이동 (혼합 크기도 각자 이동)
+    const base = r.fs != null ? r.fs : blockBasePx(savedHost ? paraOf(savedRange.startContainer, savedHost) : deck);
+    let cur = base;
+    if(dir > 0){
+      const next = SIZE_LADDER.find(s => s > cur + 0.5);
+      cur = next || Math.min(300, Math.round(cur * 1.15));
+    } else {
+      const smaller = SIZE_LADDER.filter(s => s < cur - 0.5);
+      cur = smaller.length ? smaller[smaller.length-1] : Math.max(12, Math.round(cur / 1.15));
+    }
+    return { fs: cur };
+  });
 }
 
-// 색/굵기 강조 적용
-function applyColor(cls){
-  fmtSelection(()=>{
-    const s = document.createElement('span');
-    s.dataset.fmt = 'color';
-    s.className = cls;                    // gold / iv / mute (색·굵기만, 크기·줄간격 없음)
-    return s;
-  }, ['color']);
-}
+/* =========================================================
+   실행 취소 / 다시 실행 (인메모리)
+   · 필드 단위 {path, before, after} 스택. 타이핑은 1.5s 유휴/블러/서식 적용
+     시 커밋. IME(한글 조합) 중에는 절대 커밋하지 않음.
+   ========================================================= */
+const undoStack = [], redoStack = [];
+const UNDO_CAP = 100;
+const lastCommitted = new Map();                   // path → 마지막 확정 innerHTML
+const typingDirty = new Set();
+let typingTimer = null, composing = false;
+let updateFmtState = function(){};                  // 툴바 섹션에서 실제 구현으로 재정의
 
-// 서식 지우기 (크기+강조 모두 벗김)
-function clearFormat(){ fmtSelection(null, ['size','color']); }
+function pushUndo(e){
+  undoStack.push(e);
+  if(undoStack.length > UNDO_CAP) undoStack.shift();
+  redoStack.length = 0;
+  markDirty();
+}
+function noteTyping(el){
+  typingDirty.add(el.dataset.edit);
+  clearTimeout(typingTimer);
+  typingTimer = setTimeout(()=>{ if(!composing) commitTyping(); }, 1500);
+}
+function commitTyping(){
+  clearTimeout(typingTimer);
+  typingDirty.forEach(path=>{
+    const el = deck.querySelector(`[data-edit="${path}"]`);
+    if(!el) return;
+    const before = lastCommitted.has(path) ? lastCommitted.get(path) : el.innerHTML;
+    const after = el.innerHTML;
+    if(before !== after){
+      pushUndo({ path, before, after });
+      lastCommitted.set(path, after);
+    }
+  });
+  typingDirty.clear();
+}
+function resetUndo(){
+  undoStack.length = 0; redoStack.length = 0;
+  typingDirty.clear(); clearTimeout(typingTimer);
+  lastCommitted.clear();
+  deck.querySelectorAll('[data-edit]').forEach(el=>lastCommitted.set(el.dataset.edit, el.innerHTML));
+}
+function applyUndoEntry(path, html){
+  const el = deck.querySelector(`[data-edit="${path}"]`);
+  if(!el) return;
+  el.innerHTML = html;
+  writeBack(el);
+  lastCommitted.set(path, html);
+}
+function doUndo(){
+  commitTyping();
+  const e = undoStack.pop();
+  if(!e){ toast('되돌릴 내용이 없어요'); return; }
+  applyUndoEntry(e.path, e.before);
+  redoStack.push(e);
+  updateFmtState();
+}
+function doRedo(){
+  commitTyping();
+  const e = redoStack.pop();
+  if(!e){ toast('다시 실행할 내용이 없어요'); return; }
+  applyUndoEntry(e.path, e.after);
+  undoStack.push(e);
+  updateFmtState();
+}
+// 한글 IME 조합 가드
+deck.addEventListener('compositionstart', ()=>{ composing = true; });
+deck.addEventListener('compositionend', ()=>{
+  composing = false;
+  clearTimeout(typingTimer);
+  typingTimer = setTimeout(commitTyping, 1500);
+});
+// Ctrl+Z / Ctrl+Y (Ctrl+Shift+Z)
+document.addEventListener('keydown', e=>{
+  if(!editing) return;
+  const t = e.target;
+  if(t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) return;
+  if(!(e.ctrlKey || e.metaKey)) return;
+  const k = e.key.toLowerCase();
+  if(k === 'z' && !e.shiftKey){ e.preventDefault(); doUndo(); }
+  else if(k === 'y' || (k === 'z' && e.shiftKey)){ e.preventDefault(); doRedo(); }
+});
 
 /* --- 서식 바 버튼 배선 (mousedown 기본동작 막아 선택 유지) --- */
 const fmtBar = document.getElementById('fmtBar');
