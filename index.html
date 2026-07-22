@@ -426,6 +426,29 @@
   .ver-empty{ padding:24px 0; text-align:center; color:var(--ui-mute); font-size:12.5px; }
   .ver-foot{ padding:9px 12px; border-top:1px solid var(--ui-border); display:flex; justify-content:flex-end; }
 
+  /* ===== 텍스트로 만들기 모달 ===== */
+  .paste-panel{
+    display:none; position:fixed; inset:0; z-index:160;
+    background:rgba(46,40,35,.35); backdrop-filter:blur(3px);
+    align-items:center; justify-content:center;
+  }
+  .paste-panel.on{ display:flex; }
+  .paste-box{
+    width:min(680px, 92vw); max-height:88vh;
+    background:var(--ui-surface); border:1px solid var(--ui-border);
+    border-radius:16px; box-shadow:0 30px 80px rgba(60,50,35,.35);
+    display:flex; flex-direction:column; overflow:hidden;
+  }
+  .paste-head{ display:flex; align-items:center; justify-content:space-between; padding:14px 16px; border-bottom:1px solid var(--ui-border); }
+  .paste-head b{ font-size:15px; color:var(--ui-ink); }
+  #pasteText{
+    height:320px; resize:vertical; border:none; outline:none;
+    padding:14px 16px; font-family:var(--font); font-size:13.5px;
+    line-height:1.7; color:var(--ui-ink); background:#fff;
+  }
+  .paste-foot{ display:flex; align-items:center; gap:10px; padding:12px 16px; border-top:1px solid var(--ui-border); }
+  .paste-hint{ font-size:11.5px; color:var(--ui-mute); line-height:1.5; }
+
   /* ===== 토스트 ===== */
   .toast{
     position:fixed; z-index:200; left:50%; bottom:32px;
@@ -458,6 +481,7 @@
     <div class="brand-mark">삼신<span>노트</span> · 카드뉴스 에디터</div>
     <button class="btn" id="homeBtn">📁 내 작업</button>
     <button class="btn" id="verBtn">🕘 버전</button>
+    <button class="btn" id="pasteBtn">📋 텍스트로 만들기</button>
     <div class="spacer"></div>
     <button class="btn" id="editToggle">✏️ 편집 모드</button>
     <button class="btn" id="prev">← 이전</button>
@@ -569,6 +593,29 @@
     <div class="ver-head"><b>🕘 버전 기록</b><span>자동 스냅샷 · 복원 시 안전 백업</span></div>
     <div class="ver-list" id="verList"></div>
     <div class="ver-foot"><button class="btn sm2" id="verSnapNow">지금 스냅샷 만들기</button></div>
+  </div>
+
+  <!-- ===== 텍스트로 만들기 (붙여넣기 → 자동 배치) ===== -->
+  <div class="paste-panel" id="pastePanel">
+    <div class="paste-box">
+      <div class="paste-head">
+        <b>📋 텍스트로 카드뉴스 만들기</b>
+        <button class="btn sm2" id="pasteClose">✕ 닫기</button>
+      </div>
+      <textarea id="pasteText" placeholder="원고를 통째로 붙여넣으세요.
+
+카드 나누기 : ⸻ / --- / '카드 1' 같은 줄
+첫 카드     : 표지가 됩니다 (첫 문장 = 헤드라인)
+✔ ✅ - 로 시작하는 줄 : 체크리스트로 변환
+※ 로 시작하는 줄     : 작은 주석으로 변환
+숫자+단위(배·%·mm…)  : 포인트색 자동 강조"></textarea>
+      <div class="paste-foot">
+        <span class="paste-hint">붙여넣은 뒤 버튼을 누르면 카드가 자동 배치되고,<br>넘치는 카드는 글자 크기를 자동으로 맞춥니다.</span>
+        <div class="spacer"></div>
+        <button class="btn" id="pasteReplace" title="현재 문서를 이 내용으로 교체 (교체 전 자동 백업)">현재 문서에 덮어쓰기</button>
+        <button class="btn primary" id="pasteNew">새 문서로 만들기</button>
+      </div>
+    </div>
   </div>
 
   <!-- ===== 토스트 ===== -->
@@ -2477,7 +2524,214 @@ verList.addEventListener('click', async e=>{
 });
 
 /* =========================================================
-   [20] 부팅 — 저장소에서 문서 복원 → 렌더
+   [20] 텍스트로 만들기 — 붙여넣은 원고를 파싱해 카드 자동 배치
+   · 구분: ⸻ / ---류 구분선 / '카드 N' 라벨 줄. 구분자가 없으면 문단 단위.
+   · 첫 카드 = 표지 (첫 문장 → 헤드라인, 나머지 → 부제)
+   · ✔·✅·- 줄 → 체크리스트, ※ 줄 → 주석(note), 숫자+단위 → gold 강조
+   · 생성 후 카드별 오토핏: 넘치면 본문 글자 크기를 비율 축소 (하한 0.55)
+   ========================================================= */
+function splitCardBlocks(raw){
+  const lines = raw.replace(/\r\n?/g, '\n').split('\n');
+  const isSep = s => /^\s*(?:⸻+|⸺+|―+|—+|-{3,}|_{3,}|={3,}|~{3,}|\*{3,})\s*$/.test(s);
+  const isLabel = s => /^\s*(?:카드|슬라이드|card|page)\s*[.#]?\s*\d+\s*[.:)]?\s*$/i.test(s);
+  const blocks = [[]];
+  for(const ln of lines){
+    if(isSep(ln) || isLabel(ln)){
+      if(blocks[blocks.length-1].length) blocks.push([]);
+      continue;
+    }
+    blocks[blocks.length-1].push(ln);
+  }
+  // 블록 → 문단 배열 (빈 줄 기준)
+  const packs = blocks.map(b=>{
+    const paras = []; let cur = [];
+    for(const ln of b){
+      if(!ln.trim()){ if(cur.length){ paras.push(cur.join('\n')); cur = []; } }
+      else cur.push(ln.trim());
+    }
+    if(cur.length) paras.push(cur.join('\n'));
+    return paras;
+  }).filter(p=>p.length);
+  // 구분자 없이 한 덩어리인데 문단이 3개 이상 → 첫 문단=표지, 나머지=카드
+  if(packs.length === 1 && packs[0].length >= 3){
+    return [ [packs[0][0]], ...packs[0].slice(1).map(p=>[p]) ];
+  }
+  return packs;
+}
+
+// 숫자+단위 자동 강조 (연도·날짜류는 제외)
+function emphasizeNums(s){
+  return s.replace(/(약\s*)?(\d[\d.,]*\s*(?:배|%|mm|cm|kg|mg|명|편|건|회|개월|주간))/g,
+    (_, approx, num)=>`<span class="gold">${approx || ''}${num}</span>`);
+}
+
+function buildCoverFromText(paras){
+  const flat = paras.map(p=>p.replace(/\n/g,' ')).join(' ').replace(/\s+/g,' ').trim();
+  const sents = flat.match(/[^.?!]+[.?!]?/g) || [flat];
+  let q = (sents[0] || '').trim();
+  let sub = sents.slice(1).join(' ').trim();
+  if(!sub){
+    const ci = q.indexOf(',');
+    if(ci > 3 && ci < q.length - 4){ sub = q.slice(ci+1).trim(); q = q.slice(0, ci+1).trim(); }
+  }
+  return { q: escapeHtml(q), sub: escapeHtml(sub) };
+}
+
+function buildBodyCardFromText(paras){
+  let title = '';
+  const rest = paras.slice();
+  // 제목 후보: 첫 문단(짧으면 통째) 또는 첫 문단의 첫 줄
+  if(rest.length){
+    const flatFirst = rest[0].replace(/\n/g,' ').trim();
+    if(flatFirst.length <= 34 && rest.length > 1){
+      title = flatFirst; rest.shift();
+    } else {
+      const lns = rest[0].split('\n');
+      if(lns.length > 1 && lns[0].trim().length <= 34){
+        title = lns[0].trim();
+        rest[0] = lns.slice(1).join('\n');
+      } else if(rest.length === 1 && flatFirst.length <= 34){
+        title = flatFirst; rest.shift();
+      }
+    }
+  }
+  const html = [];
+  let checks = [], textBuf = [], first = true;
+  const mtOf = ()=> first ? '' : ' mt-m';
+  const flushText = ()=>{
+    if(!textBuf.length) return;
+    html.push(`<div class="body${mtOf()}">${textBuf.join('<br>')}</div>`);
+    textBuf = []; first = false;
+  };
+  const flushChecks = ()=>{
+    if(!checks.length) return;
+    html.push(`<div class="checks${mtOf()}">${checks.join('')}</div>`);
+    checks = []; first = false;
+  };
+  for(const p of rest){
+    for(const rawLn of p.split('\n')){
+      const ln = rawLn.trim();
+      if(!ln) continue;
+      const cm = /^([✔✅☑✓●▪◦•💗🔖📈📉]|[-*])️?\s+(.+)$/u.exec(ln);
+      if(cm){
+        flushText();
+        const mk = /^[-*]$/.test(cm[1]) ? '✔' : cm[1];
+        checks.push(`<div class="chk"><span class="mk">${mk}</span><span>${emphasizeNums(escapeHtml(cm[2]))}</span></div>`);
+        continue;
+      }
+      flushChecks();
+      if(/^※/.test(ln)){
+        flushText();
+        html.push(`<div class="note${mtOf()}"><span class="mute">${emphasizeNums(escapeHtml(ln))}</span></div>`);
+        first = false;
+      } else {
+        textBuf.push(emphasizeNums(escapeHtml(ln)));
+      }
+    }
+    flushText(); flushChecks();     // 문단 경계에서 버퍼 확정
+  }
+  flushText(); flushChecks();
+  return { eyebrow: escapeHtml(title), body: html.join('\n') };
+}
+
+function textToDoc(raw){
+  const blocks = splitCardBlocks(raw);
+  if(!blocks.length) return null;
+  const d = newDocFromTemplate();               // 브랜드·핸들 등 템플릿 상속
+  const cover = buildCoverFromText(blocks[0]);
+  d.cover.q = cover.q;
+  d.cover.sub = cover.sub;
+  const body = blocks.slice(1);
+  d.cards = body.length ? body.map(buildBodyCardFromText) : [buildBodyCardFromText(blocks[0])];
+  d.images = []; d.floats = [];
+  d.theme = { global:{}, cards:{} };
+  return migrateDoc(d);
+}
+
+/* --- 오토핏: 카드 내용이 넘치면 본문 글자 비율 축소 (저장까지 반영) --- */
+function autoFitCard(i){
+  const card = cards[i];
+  if(!card || i === 0) return;                   // 표지는 CSS 자동 줄바꿈에 맡김
+  const qt = card.querySelector('.qtitle'), qb = card.querySelector('.qbody');
+  const main = card.querySelector('.main');
+  if(!main || !qb) return;
+  const wasActive = card.classList.contains('active');
+  if(!wasActive) card.classList.add('active');
+  // 이전 오토핏 초기화 후 측정
+  [qt, qb].forEach(h=>h && h.querySelectorAll('[data-fit]').forEach(el=>{
+    if(el.dataset.fitWrap){ const p = el.parentNode; while(el.firstChild) p.insertBefore(el.firstChild, el); p.removeChild(el); }
+    else { el.style.fontSize = ''; delete el.dataset.fit; }
+  }));
+  const need = main.scrollHeight, avail = main.clientHeight;
+  if(need > avail + 4){
+    const ratio = Math.max(0.55, avail / need);
+    // 스타일 계산을 먼저 전부 수집한 뒤 일괄 적용 (연쇄 축소 방지)
+    const targets = [];
+    if(qb) qb.querySelectorAll('div, span').forEach(el=>targets.push([el, parseFloat(getComputedStyle(el).fontSize)]));
+    targets.forEach(([el, fs])=>{
+      if(!fs) return;
+      el.style.fontSize = Math.round(fs * ratio) + 'px';
+      el.dataset.fit = '1';
+    });
+    // 제목(qtitle)은 호스트 스타일이 저장되지 않으므로(L20) 내용 래핑으로 축소
+    if(qt && qt.childNodes.length){
+      const base = parseFloat(getComputedStyle(qt).fontSize) || 62;
+      const w = document.createElement('span');
+      w.dataset.fit = '1'; w.dataset.fitWrap = '1';
+      w.style.fontSize = Math.round(base * ratio) + 'px';
+      while(qt.firstChild) w.appendChild(qt.firstChild);
+      qt.appendChild(w);
+    }
+  }
+  if(!wasActive) card.classList.remove('active');
+  [qt, qb].forEach(h=>h && writeBack(h));
+}
+async function autoFitAll(){
+  await document.fonts.ready;
+  for(let i = 1; i < TOTAL; i++) autoFitCard(i);
+  markDirty();
+}
+
+/* --- 모달 배선 --- */
+const pastePanel = document.getElementById('pastePanel');
+const pasteTextEl = document.getElementById('pasteText');
+document.getElementById('pasteBtn').addEventListener('click', ()=>{
+  closePanels();
+  pastePanel.classList.add('on');
+  setTimeout(()=>pasteTextEl.focus(), 50);
+});
+document.getElementById('pasteClose').addEventListener('click', ()=>pastePanel.classList.remove('on'));
+pastePanel.addEventListener('mousedown', e=>{ if(e.target === pastePanel) pastePanel.classList.remove('on'); });
+document.addEventListener('keydown', e=>{
+  if(e.key === 'Escape' && pastePanel.classList.contains('on')) pastePanel.classList.remove('on');
+});
+async function generateFromText(mode){
+  const raw = pasteTextEl.value;
+  if(!raw.trim()){ toast('텍스트를 먼저 붙여넣어 주세요'); return; }
+  const doc = textToDoc(raw);
+  if(!doc || !doc.cards.length){ toast('카드로 나눌 내용을 찾지 못했어요'); return; }
+  if(mode === 'new'){
+    await saveDoc();
+    DOC = doc;
+  } else {
+    await snapshotDoc('텍스트 생성 전 백업');    // 덮어쓰기 전 안전 백업
+    DOC.cover = doc.cover;
+    DOC.cards = doc.cards;
+    DOC.images = doc.images;
+    DOC.floats = doc.floats;
+    migrateDoc(DOC);
+  }
+  idx = 0;
+  renderDeck();
+  pastePanel.classList.remove('on');
+  await autoFitAll();
+  toast(`카드 ${1 + DOC.cards.length}장을 만들었어요 — 내용은 편집 모드에서 자유롭게 다듬으세요`);
+}
+document.getElementById('pasteNew').addEventListener('click', ()=>generateFromText('new'));
+document.getElementById('pasteReplace').addEventListener('click', ()=>generateFromText('replace'));
+
+/* =========================================================
+   [21] 부팅 — 저장소에서 문서 복원 → 렌더
    ========================================================= */
 async function boot(){
   db = await openDb();
