@@ -599,7 +599,7 @@
 const ORIGINAL_HTML = '<!DOCTYPE html>\n' + document.documentElement.outerHTML;
 
 /* =========================================================
-   카드 콘텐츠 + 이미지 상태 (여기만 고치면 내용이 바뀝니다)
+   [0] 카드 콘텐츠 + 이미지 상태 — 데이터 시드 (여기만 고치면 내용이 바뀝니다)
    - cover : 표지 카피 (q=헤드라인, sub=부제)
    - cards : 본문 카드 배열 { eyebrow:제목, body:본문HTML }
    - images: 카드별 이미지 상태(표지+본문, 렌더 순서대로)
@@ -721,7 +721,7 @@ const APP_DATA = {
 /*__DATA_END__*/
 
 /* =========================================================
-   문서 정규화 · 마이그레이션 (모든 로더가 경유: 부팅/가져오기/복원)
+   [1] 문서 정규화 · 마이그레이션 (모든 로더가 경유: 부팅/가져오기/복원)
    - v1(구 0722 다운로드 파일): flat theme → { global, cards }
    - schema 2 보장: meta / theme.global·cards / floats(Phase 2 예약)
    ========================================================= */
@@ -765,7 +765,7 @@ let DOC = migrateDoc(APP_DATA);
 // 자동 저장 트리거 — 저장소 섹션에서 실제 구현으로 재정의됨
 let markDirty = function(){};
 
-/* ===== 렌더링 (문서 전환·스냅샷 복원 시 재호출 가능) ===== */
+/* ===== [2] 렌더링 (문서 전환·스냅샷 복원 시 재호출 가능) ===== */
 const deck = document.getElementById('deck');
 let TOTAL = 0;
 let cards = [];
@@ -829,7 +829,7 @@ function renderDeck(){
   show(Math.max(0, Math.min(idx, TOTAL-1)));
 }
 
-/* ===== 편집 내용 → 데이터 반영 (자동저장·내보내기에 그대로 저장) ===== */
+/* ===== [3] 편집 반영·편집 모드 — writeBack / editToggle ===== */
 function writeBack(el){
   const path = el.dataset.edit;
   const html = el.innerHTML;
@@ -855,7 +855,7 @@ editToggle.onclick = ()=>{
 };
 
 /* =========================================================
-   이모지 삽입 + 시스템 프리셋(크기·강조) 적용
+   [4] 공용 UI — 토스트 · 바 높이 동기화 · 패널 관리자(L16) · 선택 기억(L4)
    ========================================================= */
 
 /* --- 토스트 --- */
@@ -925,7 +925,7 @@ function useSaved(){
 }
 
 /* =========================================================
-   서식 엔진 (run 기반) — "파싱 → 배열 변환 → 최소 HTML 직렬화"
+   [5] 서식 엔진 (run 기반) — "파싱 → 배열 변환 → 최소 HTML 직렬화"
    · 서식 적용 시점에만 문단의 인라인 콘텐츠를 run(동일 스타일 구간) 배열로
      파싱하고, 순수 배열 연산으로 변환한 뒤 최소 HTML로 재직렬화한다.
    · 타이핑은 일반 contenteditable 그대로 (한글 IME·캐럿 무영향).
@@ -1263,7 +1263,7 @@ function stepFontSize(dir){
 }
 
 /* =========================================================
-   실행 취소 / 다시 실행 (인메모리)
+   [6] 실행 취소 / 다시 실행 (인메모리)
    · 필드 단위 {path, before, after} 스택. 타이핑은 1.5s 유휴/블러/서식 적용
      시 커밋. IME(한글 조합) 중에는 절대 커밋하지 않음.
    ========================================================= */
@@ -1350,7 +1350,7 @@ document.addEventListener('keydown', e=>{
 });
 
 /* =========================================================
-   PPT식 서식 바 — 배선 + 선택 상태 실시간 반영
+   [7] PPT식 서식 바 — 배선 + 선택 상태 실시간 반영
    · mousedown preventDefault로 선택 유지 (L4), input은 예외
    · 팝오버(형광펜/글자색)는 패널 관리자에 등록 → 배타 표시 (L16)
    ========================================================= */
@@ -1561,7 +1561,9 @@ document.getElementById('undoBtn').addEventListener('click', doUndo);
 document.getElementById('redoBtn').addEventListener('click', doRedo);
 document.getElementById('fmtClear').addEventListener('click', clearFormat);
 
-/* --- 이모지 데이터(널리 지원되는 안전한 이모지 + 한국어 검색어) --- */
+/* =========================================================
+   [8] 이모지 — 데이터(한국어 검색어)·패널·삽입
+   ========================================================= */
 const EMOJIS = [
   {c:"❤️",k:"하트 사랑 빨강 heart love"},{c:"💗",k:"분홍하트 두근 핑크 pink heart"},
   {c:"💛",k:"노랑하트 우정 yellow"},{c:"💚",k:"초록하트 green"},{c:"💙",k:"파랑하트 blue"},
@@ -1675,7 +1677,7 @@ function insertEmoji(ch){
 /* 패널 밖 클릭 시 닫기 — 패널 관리자(closePanels)가 일괄 처리 */
 
 /* =========================================================
-   색상 테마 — 전역(.stage) + 카드별(.card) 스코프 적용
+   [9] 색상 테마 — 전역(.stage) + 카드별(.card) 스코프 적용
    · JS는 documentElement를 절대 건드리지 않는다 → 에디터 UI(--ui-*) 불변
    · 전역 테마는 .stage 인라인 변수로, 카드별 오버라이드는 .card 인라인
      변수로 적용 (CSS 캐스케이드가 우선순위 처리, PNG 캡처 호환)
@@ -1869,7 +1871,7 @@ themeBtn.addEventListener('click', ()=>{
   }
 });
 
-/* ===== 네비게이션 ===== */
+/* ===== [10] 네비게이션 ===== */
 let idx = 0;
 const curEl = document.getElementById('cur');
 const prevBtn = document.getElementById('prev');
@@ -1886,7 +1888,7 @@ function show(n){
   if(themeBuilt && themePanel.classList.contains('on')) setThemeScope(themeScope);
 }
 
-/* ===== 카드별 이미지 적용 (비율 유지) ===== */
+/* ===== [11] 카드 이미지 — 적용(비율 유지)·컨트롤·업로드 압축 ===== */
 function applyCardImg(i){
   const card = cards[i];
   if(!card) return;
@@ -2021,7 +2023,7 @@ window.addEventListener('keydown', e=>{
 });
 /* 초기 렌더는 스크립트 맨 끝의 boot()가 수행 (저장소에서 문서 복원 후) */
 
-/* ===== 미리보기 스케일(화면 폭에 맞춤) ===== */
+/* ===== [12] 미리보기 스케일(화면 폭에 맞춤) ===== */
 const viewport = document.getElementById('viewport');
 const CARD_W = 1080, CARD_H = 1350;
 function fit(){
@@ -2034,7 +2036,7 @@ function fit(){
 window.addEventListener('resize', fit);
 fit();
 
-/* ===== PNG 캡처 ===== */
+/* ===== [13] PNG 캡처 ===== */
 const overlay = document.getElementById('overlay');
 const ovText = document.getElementById('ovText');
 const ovBar = document.getElementById('ovBar');
@@ -2118,7 +2120,7 @@ document.getElementById('exportAll').onclick = async ()=>{
   finally{ setTimeout(()=>{overlay.classList.remove('on'); ovBar.style.width='0';},300); show(idx); }
 };
 
-/* ===== HTML 파일로 받기 (편집·이미지 상태를 그대로 저장) ===== */
+/* ===== [14] HTML 파일로 받기 (자가 내보내기·가져오기와 왕복) ===== */
 function cleanDocData(d){
   return JSON.parse(JSON.stringify(d, (k,v)=> (k==='_natW'||k==='_natH') ? undefined : v));
 }
@@ -2142,7 +2144,7 @@ document.getElementById('downloadHtml').onclick = function(){
 };
 
 /* =========================================================
-   저장소 (IndexedDB) — 실시간 자동 저장 · 문서 관리 기반
+   [15] 저장소 (IndexedDB) — 실시간 자동 저장 · 문서 관리 기반
    · docs:      { id, title, createdAt, updatedAt, thumb, data }
    · snapshots: { snapId(auto), docId, ts, label, data }
    · localStorage에는 마지막 문서 id 포인터만 (이미지 dataURL은 IDB로 — L7)
@@ -2255,7 +2257,7 @@ async function importHtmlFile(file){
 }
 
 /* =========================================================
-   썸네일 (표지 저해상 캡처, 60초 주기 · 필요 시에만)
+   [16] 썸네일 (표지 저해상 캡처, 60초 주기 · 필요 시에만)
    ========================================================= */
 let thumbBusy = false;
 async function genThumb(force){
@@ -2273,7 +2275,7 @@ async function genThumb(force){
 setInterval(()=>genThumb(false), 60000);
 
 /* =========================================================
-   버전 스냅샷 — ⓐ 변경 후 5분 경과 ⓑ 복원 직전 ⓒ 내보내기 시점
+   [17] 버전 스냅샷 — ⓐ 변경 후 5분 경과 ⓑ 복원 직전 ⓒ 내보내기 시점
    문서당 최근 30개 유지 (저장 공간 60% 초과 시 15개)
    ========================================================= */
 async function snapshotDoc(label){
@@ -2301,7 +2303,7 @@ async function pruneSnapshots(docId){
 setInterval(()=>{ if(dirtySinceSnap && storageOk) snapshotDoc('자동'); }, 5 * 60 * 1000);
 
 /* =========================================================
-   내 작업 (문서 관리) 패널
+   [18] 내 작업 (문서 관리) 패널
    ========================================================= */
 const homeBtn = document.getElementById('homeBtn');
 const homePanel = document.getElementById('homePanel');
@@ -2424,7 +2426,7 @@ homeGrid.addEventListener('change', async e=>{
 });
 
 /* =========================================================
-   버전(스냅샷) 패널
+   [19] 버전(스냅샷) 패널
    ========================================================= */
 const verBtn = document.getElementById('verBtn');
 const verPanel = document.getElementById('verPanel');
@@ -2474,7 +2476,9 @@ verList.addEventListener('click', async e=>{
   }
 });
 
-/* --- 부팅: 저장소에서 문서 복원 → 렌더 --- */
+/* =========================================================
+   [20] 부팅 — 저장소에서 문서 복원 → 렌더
+   ========================================================= */
 async function boot(){
   db = await openDb();
   storageOk = !!db;

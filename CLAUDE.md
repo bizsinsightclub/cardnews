@@ -1,89 +1,127 @@
-# 삼신노트 카드뉴스 — 글래스 웹 에디터
+# 삼신노트 카드뉴스 — 템플릿형 웹 에디터 (v3)
 
-Claude Code로 작업하는 사람을 위한 프로젝트 가이드. 이 파일을 먼저 읽고, 디자인은 `design.md`, 과거 실패·수정 이력은 `lesson.md`를 참고하세요.
+Claude Code로 작업하는 사람을 위한 프로젝트 가이드. 이 파일을 먼저 읽고, 디자인 토큰은 `design.md`, 과거 실패·수정 이력은 `lesson.md`를 참고하세요.
 
 ## 프로젝트 개요
 
-병원·약국 SNS용 **카드뉴스(1080 × 1350px, 4:5)** 슬라이드를 브라우저에서 직접 편집하고 PNG로 내보내는 **단일 HTML 정적 웹 에디터**입니다. 빌드 도구·번들러·백엔드가 없습니다. `index.html` 하나가 전체 앱입니다.
+병원·약국 SNS용 **카드뉴스(1080 × 1350px, 4:5)** 를 브라우저에서 직접 편집하고 PNG로 내보내는 **단일 HTML 정적 웹 에디터**입니다. 빌드 도구·번들러·백엔드가 없습니다. `index.html` 하나가 전체 앱입니다.
 
-- 진입점: **`index.html`** (GitHub Pages가 서빙하는 파일)
-- 원본 보존본: `삼신노트_퍼고베리스_편집형.html` (개선 전 버전, 참고용)
-- 외부 의존성: Pretendard/IBM Plex Mono/Nanum Myeongjo 웹폰트, `html2canvas`(PNG 캡처) — 모두 CDN
+- 진입점: **`index.html`** (GitHub Pages가 서빙하는 파일, v3 템플릿형 에디터)
+- 구버전 보존: `legacy/index.html`(블록엔진 글래스 에디터), `legacy/index2.html`(콘텐츠 변형본), `legacy/삼신노트_퍼고베리스_편집형.html`(최초 원본)
+- 외부 의존성: Pretendard 웹폰트, `html2canvas`(PNG 캡처) — 모두 CDN
+
+**v2(블록엔진)와 v3는 다른 앱입니다.** v3는 절대좌표 드래그 블록이 아니라 **고정 템플릿 + contenteditable 필드** 모델입니다. 자유 배치 플로팅 레이어는 Phase 2 예정이며 상태 모델에 `floats[]`로 자리만 예약되어 있습니다. lesson.md의 L1–L17은 legacy 기준 교훈이지만 일반 원칙(L1/2/3/4/7/14/16)은 v3에도 적용됩니다.
 
 ## 실행 방법
-
-정적 파일이라 그냥 열면 되지만, `file://`에서는 일부 브라우저가 폰트/캡처를 제한할 수 있으므로 로컬 서버 권장:
 
 ```bash
 python -m http.server 8731
 # 브라우저에서 http://localhost:8731/index.html
 ```
 
-## 핵심 인터랙션 모델 (v2 — 중요)
+`file://`로 열어도 동작하지만 폰트/캡처/IndexedDB 제약이 있을 수 있어 로컬 서버 권장.
 
-- **모든 블록은 절대좌표(absolute).** flow/free 이원 모델은 폐기됨. 최초 1회 `bakeLayout()`가 원본 레이아웃을 측정해 `x,y,w`를 굳히고, 이후 모든 배치는 좌표 기반. (이전 버전의 "이동 시 위계 깨짐·클릭 불가" 버그 원인 → `lesson.md` L8 참고)
-- **클릭 = 선택/이동, 더블클릭 = 편집.** 비편집 블록은 `contenteditable=false` + `user-select:none`(드래그=이동), 더블클릭 시에만 편집 진입, 바깥 클릭 시 종료. (`lesson.md` L9)
-- **한 장씩(페이지형) 뷰.** `cur` 인덱스의 슬라이드만 렌더. 상단 페이저·하단 필름스트립으로 이동.
-- **브랜드/핸들(페이지번호)/진행점(dots)도 일반 블록** → 이동·삭제·편집 가능.
+## 핵심 아키텍처 (v3)
 
-## 기능 (요구사항 대응)
-
-| 기능 | 구현 위치(섹션 주석) | 메모 |
-|---|---|---|
-| 텍스트 자유 드래그 이동 | `3. 선택/편집/이동/크기` | 절대좌표 직접 갱신. snap 정렬선(중앙540·안전62/1018·상하62/1288) |
-| 폰트 크기 편집 | 블록바 `A−/A+`, 선택툴바 `A−/A+` | 블록 단위 = `fontPx`, 인라인 선택 = span 래핑 |
-| 도형 안 텍스트 넣기/빼기 | `6. 도형 추가` + 더블클릭 편집 | 좌측 독 `◇도형`으로 추가, 블록바 🗑 삭제, 내부는 더블클릭 편집 |
-| 선택 서식 툴바(드래그 시 위에 뜸) | `4. 선택 서식 툴바` | 편집 중 글자 선택 시 출현. B·I·U·하이라이트·글자색·크기(인라인)·**자간/줄간격(박스 전체)**. `execCommand` + `adjustBoxStyle` |
-| 자간/줄간격 | 선택툴바 `AV±` / `≡±` | 블록 단위. `b.letterSpacing`(em)·`b.lineHeight`(비율) 모델 저장·복원. 줄간격은 인라인 불가하여 블록 적용 |
-| 그림판식 hex 팔레트 | `5. 컬러 팔레트` | 스와치 + `<input type=color>` + hex. 배경/하이라이트/글자색/도형배경 공용 |
-| 슬라이드 배경색 | 독 `🎨 배경` | `sl.bg` (null=기본 그라데이션) |
-| 이미지 편집(플로팅 패널) | `7. 이미지 패널` | 독 `🖼 이미지` → 옆에 뜨는 패널에서 줌·가로·세로·채움·제거 |
-| 슬라이드 추가/복제/삭제 | 독 `＋/⧉/🗑` | |
-| 페이지 이동 | `9. 페이저/필름스트립/독` | ‹ n/N › + 번호 칩 |
-| 자동 저장 | `1. 저장소` localStorage | 키 `samsin_cardnews_v2`, 250ms 디바운스. 독 `↺ 초기화`로 리셋 |
-| PNG 저장 | `8. PNG 저장` | html2canvas, 1080×1350 고정, scale 2. 전체저장은 페이지 순회 |
-
-## 코드 구조 (index.html `<script>` 내 섹션)
-
-순서대로 번호 주석이 달려 있습니다. 수정 시 해당 섹션만 보세요.
-
-```
-0.  DEFAULT / SHAPES / SWATCHES / TYPE_FONT       — 데이터·상수
-1.  저장소 + 레이아웃 베이크 (preState/load/save/bakeLayout)
-2.  렌더 (현재 슬라이드 한 장: render/buildBlock)
-3.  선택·편집·이동·크기 (selectBlock/enterEdit/exitEdit/startDrag/wireBlock)
-4.  선택 서식 툴바 (updateFmt/execCommand/stepFontSize)
-5.  컬러 팔레트 (openPalette)
-6.  도형 추가 / 텍스트 추가
-7.  이미지 패널 (syncImagePanel/applyImg)
-8.  PNG 저장 (savePng/saveAll)
-9.  페이저·필름스트립·좌측 독 (setIndex/dock click 라우팅/슬라이드 CRUD)
-10. 시작 (init: 폰트 로드 후 bake → render)
-```
-
-### 상태(state) 모델 (v2)
+### 1. 문서 모델 — schema 2
 
 ```js
-state = { _baked:true, _guides:true, slides:[ {
-  id, name, cover, bg:null|'#hex', image:null|{src,fit,zoom,px,py},
-  blocks:[ { id, type, html, x, y, w, fontPx:null, bg:null } ]   // 전부 절대좌표
-} ] }
-// cur = 현재 보는 슬라이드 인덱스(전역)
+DOC = {                      // 현재 열려 있는 문서 (전역, 문서 전환 시 재할당)
+  schema: 2,
+  meta:  { id, title, createdAt, updatedAt },
+  cover: { brand, handle, q, sub },              // 표지 (HTML 문자열)
+  cards: [ { eyebrow, body } ],                  // 본문 카드 (HTML 문자열)
+  images:[ { src, fit, zoom, px, py, overlay } ],// 렌더 순서(표지+본문)별
+  theme: { global:{ '--var':'#hex' }, cards:{ '2':{ '--var':'#hex' } } },
+  floats:[ [] ],                                 // Phase 2 예약 (자유 배치 요소)
+}
 ```
 
-- `type`은 그대로 CSS 클래스명: `brand`,`handle`,`dots`,`hcover`,`qhead`,`h2`,`qsub`,`bd`,`eyebrow`,`ratio`,`eq`,`vsrow`,`checks`,`disc`,`brandline`.
-- 베이크 전 임시 상태(`preState`)는 `_brand/_handle/_dots/_content`를 들고 있다가, `bakeLayout()`이 측정 후 단일 `blocks[]`로 합치고 `_baked=true`로 표시한다. 저장된 state가 `_baked`면 베이크를 건너뛴다.
-- 텍스트는 `html`(innerHTML)로 저장 → 새로고침 복원.
+- 내장 시드 `APP_DATA`(`/*__DATA_START__*/…/*__DATA_END__*/` 마커 안)는 새 문서 템플릿. **모든 로더(부팅/가져오기/복원)는 `migrateDoc()`을 경유**해 v1(구 0722 다운로드 파일, flat theme)도 흡수한다.
+- "HTML 파일 받기"는 마커 블록을 현재 `DOC`의 JSON으로 치환한 자기 복제 HTML을 다운로드한다. 그 파일을 "HTML 가져오기"로 다시 읽을 수 있다(왕복).
+
+### 2. run 기반 서식 엔진 (부분 선택 서식의 근본 해결)
+
+서식 적용 시점에만 문단(가장 안쪽 DIV)의 인라인 콘텐츠를 **run 배열**(동일 스타일 텍스트 구간)로 파싱 → 순수 배열 연산으로 변환 → 최소 HTML로 재직렬화. 타이핑은 일반 contenteditable(한글 IME 무영향).
+
+```js
+// run: { text|{br}|{atom}, fs, fw, it, un, st, color, hl, ls, chain }
+// color 토큰(gold/iv/mute/red/green)은 클래스로 직렬화 → 테마에 반응
+```
+
+**불변 규칙 (어기면 과거 버그 재발):**
+- **line-height는 절대 스팬에 쓰지 않는다.** 문단 블록에 unitless로만. (`serializeRuns`가 원천 차단)
+- 미지의 클래스/속성 요소·**맨 span**(`.chk` 플렉스 래퍼)은 구조 컨테이너로 원형 보존(`chain`). 절대 벗기지 말 것.
+- 선택과 "경계만 닿은" 문단·스팬은 건드리지 않는다 (`parasInRange`의 `end > start` 필터).
+- 진입점은 `applyInline(patch)`(인라인)·`applyBlockStyle(fn)`(문단: 정렬·줄간격·자간)뿐. DOM Range를 직접 수술하지 말 것.
+- cover 필드처럼 호스트 직속에 블록 스타일을 걸어야 하면 `<div data-line>`으로 감싼 뒤 적용 (writeBack이 innerHTML만 저장하므로).
+
+### 3. 테마 — 2계층 CSS 변수
+
+- **에디터 UI는 `--ui-*` 전용** (`--ui-bg/surface/ink/mute/accent/border/danger`). **JS가 절대 변경하지 않는다.** 셸(툴바·패널·토스트)에 캔버스 테마 변수를 쓰지 말 것.
+- 캔버스 테마 변수(`--page/--ink/--ivory/--body-ink/--mute/--sub-ink/--gold/--gold-soft/--red/--green`)는 `:root` 기본값 + **JS가 `.stage`(전역)/`.card`(카드별) 인라인으로 오버라이드**. `documentElement`에 쓰면 안 된다.
+- 카드별 테마·카드 배경색 = `DOC.theme.cards[i]` 오버라이드 (배경색은 `--ink`).
+- 이미지 오버레이 그라데이션은 카드 유효 `--ink`에서 **JS로 rgba 계산**(`applyOverlayColor`) — html2canvas가 `color-mix()`를 못 그리므로 CSS 신문법 금지.
+
+### 4. 저장소 — IndexedDB (`samsin_cardnews`)
+
+- `docs` { id, title, createdAt, updatedAt, thumb, data } / `snapshots` { snapId, docId, ts, label, data }
+- **모든 뮤테이터는 `markDirty()`를 호출**한다 → 800ms 디바운스 자동 저장. 새 기능 추가 시 상태를 바꾸는 곳마다 잊지 말 것.
+- localStorage에는 마지막 문서 id 포인터(`samsin_last_doc`)만. **이미지 dataURL을 localStorage에 넣지 말 것**(L7 쿼터 사고).
+- 스냅샷: 변경 후 5분 경과·전체 내보내기·HTML 받기 시점·수동. 복원 전 "복원 전 자동 백업" 생성. 문서당 30개(공간 60% 초과 시 15개) 유지.
+- 업로드 이미지는 `compressImage()`(긴 변 2160px, JPEG q0.85, 알파 시 PNG) 경유.
+
+### 5. UI 패널 규칙
+
+- 플로팅 패널(이모지·테마·색 팝오버·버전)은 **`registerPanel()`로 등록 → `togglePanel()/closePanels()`로만 표시 제어** (L16: 배타 표시 한 곳 관리). 새 패널도 반드시 등록할 것.
+- 서식 바 버튼은 `mousedown preventDefault`로 선택 유지 (L4). input 요소는 예외.
+- 패널 상단 위치는 `--tbH`(툴바)·`--tbH2`(툴바+서식 바) 기준.
+
+## 코드 구조 (index.html `<script>` 섹션 — 번호 주석 기준)
+
+```
+[0]  카드 콘텐츠 + 이미지 상태 — 데이터 시드 (APP_DATA, __DATA_START__ 마커)
+[1]  문서 정규화 · 마이그레이션 (migrateDoc / newDocFromTemplate / DOC)
+[2]  렌더링 (renderDeck — 재호출 가능)
+[3]  편집 반영·편집 모드 (writeBack / editToggle)
+[4]  공용 UI (토스트 · syncBars · 패널 관리자 · savedRange 선택 기억)
+[5]  서식 엔진 (parseRuns/patchRange/serializeRuns/applyInline/applyBlockStyle)
+[6]  실행 취소/다시 실행 (undoStack · commitTyping · IME 가드)
+[7]  PPT식 서식 바 (selectionState/updateFmtState · 팝오버 · 단축키)
+[8]  이모지 (데이터·패널·삽입)
+[9]  색상 테마 (THEME_VARS/PRESETS · 스코프 · applyThemeAll/applyOverlayColor)
+[10] 네비게이션 (show/idx)
+[11] 카드 이미지 (applyCardImg/loadNat/컨트롤/compressImage)
+[12] 미리보기 스케일 (fit)
+[13] PNG 캡처 (captureCard(i, scale)/exportOne/exportAll)
+[14] HTML 파일로 받기 (buildHtmlBlob/downloadBlob)
+[15] 저장소 (openDb/dbGet·Put·Del/markDirty/saveDoc/boot 지원)
+[16] 썸네일 (genThumb)
+[17] 버전 스냅샷 (snapshotDoc/pruneSnapshots)
+[18] 내 작업 패널 (renderHome + 문서 CRUD)
+[19] 버전 패널 (renderVerList/복원)
+[20] 부팅 (boot — 저장소에서 문서 복원 후 renderDeck)
+```
 
 ## 작업 규칙
 
-- **단일 파일 유지.** 별도 번들/프레임워크 도입 금지. 기능 추가는 `index.html` 섹션 주석 구조를 따른다.
-- **절대좌표 모델 유지.** 슬라이드 전체를 덮는 클릭 가로채기 레이어를 만들지 말 것(L8). 좌표 계산엔 항상 `/VIEW()` 보정(L3).
-- **PNG 캡처 호환 검증.** `--view` 축소를 쓰므로 새 요소가 `body.exporting` 경로(transform none, 1080×1350)에서 깨지지 않는지 확인.
-- **원본 비주얼 보존.** 슬라이드 컴포넌트 CSS(`.qhead`,`.vscol` 등)는 원본 값 유지. 디자인 토큰은 `design.md`.
-- **변경 후 검증:** 로컬 서버로 띄워 ① 콘솔 에러 0 ② 베이크 후 단일 슬라이드 렌더 ③ 블록 이동→재클릭 가능 ④ 더블클릭 편집→재클릭 가능 ⑤ PNG 저장까지 확인.
-- 사용자가 수정을 요청했거나 같은 실수가 반복되면 **`lesson.md`에 항목(L14…)을 추가**한다.
+- **단일 파일 유지.** 별도 번들/프레임워크 도입 금지. 기능 추가는 섹션 번호 주석 구조를 따른다.
+- 위 "핵심 아키텍처"의 불변 규칙 4가지 그룹(서식 엔진 / 테마 / 저장소 / 패널)을 지킨다.
+- **PNG 캡처 호환 검증.** 새 요소가 캡처(1080×1350, transform 없음) 경로에서 깨지지 않는지, 편집용 UI가 캡처에 찍히지 않는지 확인 (L1/L2).
+- **원본 비주얼 보존.** 슬라이드 타이포 CSS(`.cv-title`, `.qtitle`, `.body` 등)는 기존 값 유지. 토큰은 `design.md`.
+- 사용자가 수정을 요청했거나 같은 실수가 반복되면 **`lesson.md`에 항목(L22…)을 추가**한다.
+
+## 변경 후 검증 체크리스트
+
+로컬 서버로 띄워 (`http://localhost:8731/index.html`):
+
+1. 콘솔 에러 0
+2. **서식**: 레거시 스팬 포함 줄에서 중간 몇 글자만 크기 변경 → 선택 밖 서식 유지 / `.chk` 두 개 가로지른 선택 정상 / 적용·해제 반복해도 HTML 길이 안정(devtools로 중첩 스팬·스팬 line-height 없음 확인) / Ctrl+Z 복원
+3. **테마**: 다크 프리셋 적용 → 툴바·패널 색 불변 / 카드별 오버라이드 → 다른 카드 무영향
+4. **저장**: 편집 후 1초 내 새로고침 → 복원 / 내 작업에서 문서 전환 / 버전 복원 시 자동 백업 생성
+5. **내보내기**: PNG 2160×2700에 편집 UI 미포함 / HTML 받기 → 가져오기 왕복
+6. 배포 시: push → Actions green → Pages 루트에 신 에디터, `/legacy/index.html`에 구 에디터
 
 ## 배포
 
-`main` 푸시 시 `.github/workflows/deploy.yml`이 GitHub Pages로 자동 배포. 저장소 Settings → Pages → Source를 **GitHub Actions**로 설정하면 됨. 자세한 내용은 `README.md`.
+`main` 푸시 시 `.github/workflows/deploy.yml`이 저장소 루트 전체를 GitHub Pages로 배포. Settings → Pages → Source = **GitHub Actions**. 자세한 내용은 `README.md`.
