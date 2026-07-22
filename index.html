@@ -674,6 +674,8 @@ function migrateDoc(raw){
 // 내장 시드(새 문서 템플릿) — 마이그레이션으로 변형되기 전 원형 보존
 const TEMPLATE_JSON = JSON.stringify(APP_DATA);
 function newDocFromTemplate(){ return migrateDoc(JSON.parse(TEMPLATE_JSON)); }
+// 내장 데이터에 meta가 있으면 '저장본을 다시 연 것' (원본 시드에는 meta 없음)
+const EMBEDDED_HAS_META = !!(APP_DATA.meta && APP_DATA.meta.id);
 
 // 현재 열려 있는 문서 (문서 전환 시 재할당)
 let DOC = migrateDoc(APP_DATA);
@@ -1866,19 +1868,52 @@ function refreshImgCtrl(){
   ccRemove.disabled = !im.src;
 }
 
-ccFile.addEventListener('change', e=>{
+/* 업로드 시 압축: 긴 변 2160px 캡 + JPEG q0.85 재인코딩 (알파 있으면 PNG 유지)
+   → localStorage 쿼터 사고(L7) 재발 방지 + IndexedDB 용량 절약 */
+function compressImage(file){
+  return new Promise((res, rej)=>{
+    const rd = new FileReader();
+    rd.onload = ()=>{
+      const img = new Image();
+      img.onload = ()=>{
+        const MAX = 2160;
+        const scale = Math.min(1, MAX / Math.max(img.naturalWidth, img.naturalHeight));
+        const cw = Math.max(1, Math.round(img.naturalWidth * scale));
+        const ch = Math.max(1, Math.round(img.naturalHeight * scale));
+        const cv = document.createElement('canvas');
+        cv.width = cw; cv.height = ch;
+        const cx = cv.getContext('2d');
+        cx.drawImage(img, 0, 0, cw, ch);
+        let hasAlpha = false;
+        if(/png|webp|gif/i.test(file.type || '')){
+          try{
+            const d = cx.getImageData(0, 0, cw, ch).data;
+            for(let i=3;i<d.length;i+=256){ if(d[i] < 255){ hasAlpha = true; break; } }
+          }catch(_){}
+        }
+        res(hasAlpha ? cv.toDataURL('image/png') : cv.toDataURL('image/jpeg', 0.85));
+      };
+      img.onerror = ()=>rej(new Error('이미지를 읽을 수 없어요'));
+      img.src = rd.result;
+    };
+    rd.onerror = ()=>rej(rd.error);
+    rd.readAsDataURL(file);
+  });
+}
+ccFile.addEventListener('change', async e=>{
   const f = e.target.files[0]; if(!f) return;
-  const rd = new FileReader();
-  rd.onload = ()=>{
+  e.target.value = '';                    // 같은 파일 다시 선택 가능하도록
+  try{
+    const src = await compressImage(f);
     const im = DOC.images[idx];
-    im.src = rd.result; im.fit='cover'; im.zoom=1; im.px=50; im.py=50;
+    im.src = src; im.fit='cover'; im.zoom=1; im.px=50; im.py=50;
     im._natW = 0; im._natH = 0;
     loadNat(idx);
     refreshImgCtrl();
     markDirty();
-  };
-  rd.readAsDataURL(f);
-  e.target.value = '';                    // 같은 파일 다시 선택 가능하도록
+  }catch(err){
+    toast('⚠ ' + (err && err.message || '이미지 불러오기 실패'));
+  }
 });
 ccRemove.addEventListener('click', ()=>{
   const im = DOC.images[idx];
@@ -1902,7 +1937,7 @@ window.addEventListener('keydown', e=>{
   if(e.key==='ArrowLeft') show(idx-1);
   if(e.key==='ArrowRight') show(idx+1);
 });
-renderDeck();                              // 초기 렌더 (카드 생성 + 이미지 로드 + show)
+/* 초기 렌더는 스크립트 맨 끝의 boot()가 수행 (저장소에서 문서 복원 후) */
 
 /* ===== 미리보기 스케일(화면 폭에 맞춤) ===== */
 const viewport = document.getElementById('viewport');
@@ -2001,11 +2036,13 @@ document.getElementById('exportAll').onclick = async ()=>{
 };
 
 /* ===== HTML 파일로 받기 (편집·이미지 상태를 그대로 저장) ===== */
+function cleanDocData(d){
+  return JSON.parse(JSON.stringify(d, (k,v)=> (k==='_natW'||k==='_natH') ? undefined : v));
+}
 document.getElementById('downloadHtml').onclick = function(){
   // 편집 내용은 input 이벤트로 이미 DOC에 반영됨. 내부 캐시(_natW 등)만 제거.
   DOC.meta.updatedAt = Date.now();
-  const clean = JSON.parse(JSON.stringify(DOC, (k,v)=> (k==='_natW'||k==='_natH') ? undefined : v));
-  const dataJs = '/*__DATA_START__*/\nconst APP_DATA = ' + JSON.stringify(clean) + ';\n/*__DATA_END__*/';
+  const dataJs = '/*__DATA_START__*/\nconst APP_DATA = ' + JSON.stringify(cleanDocData(DOC)) + ';\n/*__DATA_END__*/';
   const out = ORIGINAL_HTML.replace(/\/\*__DATA_START__\*\/[\s\S]*?\/\*__DATA_END__\*\//, function(){ return dataJs; });
   const blob = new Blob([out], {type:'text/html;charset=utf-8'});
   const a = document.createElement('a');
@@ -2014,6 +2051,151 @@ document.getElementById('downloadHtml').onclick = function(){
   a.click();
   setTimeout(function(){ URL.revokeObjectURL(a.href); }, 1000);
 };
+
+/* =========================================================
+   저장소 (IndexedDB) — 실시간 자동 저장 · 문서 관리 기반
+   · docs:      { id, title, createdAt, updatedAt, thumb, data }
+   · snapshots: { snapId(auto), docId, ts, label, data }
+   · localStorage에는 마지막 문서 id 포인터만 (이미지 dataURL은 IDB로 — L7)
+   ========================================================= */
+const DB_NAME = 'samsin_cardnews', DB_VER = 1;
+const LAST_DOC_KEY = 'samsin_last_doc';
+let db = null, storageOk = false;
+const thumbCache = new Map();                       // docId → dataURL (60초 주기 재생성)
+
+function lsGet(k){ try{ return localStorage.getItem(k); }catch(_){ return null; } }
+function lsSet(k, v){ try{ localStorage.setItem(k, v); }catch(_){} }
+
+function openDb(){
+  return new Promise(res=>{
+    if(!window.indexedDB){ res(null); return; }
+    const req = indexedDB.open(DB_NAME, DB_VER);
+    req.onupgradeneeded = ()=>{
+      const d = req.result;
+      if(!d.objectStoreNames.contains('docs')) d.createObjectStore('docs', { keyPath:'id' });
+      if(!d.objectStoreNames.contains('snapshots')){
+        const s = d.createObjectStore('snapshots', { keyPath:'snapId', autoIncrement:true });
+        s.createIndex('byDoc', 'docId');
+      }
+    };
+    req.onsuccess = ()=>res(req.result);
+    req.onerror = ()=>res(null);
+  });
+}
+function dbReq(fn){
+  return new Promise((res, rej)=>{
+    if(!db){ rej(new Error('저장소 없음')); return; }
+    const r = fn(db);
+    r.onsuccess = ()=>res(r.result);
+    r.onerror = ()=>rej(r.error);
+  });
+}
+const dbGet    = (store, key) => dbReq(d=>d.transaction(store).objectStore(store).get(key));
+const dbGetAll = (store)      => dbReq(d=>d.transaction(store).objectStore(store).getAll());
+const dbPut    = (store, val) => dbReq(d=>d.transaction(store,'readwrite').objectStore(store).put(val));
+const dbDel    = (store, key) => dbReq(d=>d.transaction(store,'readwrite').objectStore(store).delete(key));
+const dbByDoc  = (docId)      => dbReq(d=>d.transaction('snapshots').objectStore('snapshots').index('byDoc').getAll(docId));
+
+function docTitle(d){
+  if(d.meta.title) return d.meta.title;
+  const t = document.createElement('div');
+  t.innerHTML = d.cover.q || '';
+  const s = (t.textContent || '').replace(/\s+/g,' ').trim();
+  return s.slice(0, 24) || '제목 없는 카드뉴스';
+}
+
+/* --- 자동 저장 (800ms 디바운스) --- */
+let dirty = false, saveTimer = null;
+markDirty = function(){
+  dirty = true;
+  DOC.meta.updatedAt = Date.now();
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(saveDoc, 800);
+};
+async function saveDoc(){
+  clearTimeout(saveTimer);
+  if(!storageOk) return;
+  try{
+    await dbPut('docs', {
+      id: DOC.meta.id, title: docTitle(DOC),
+      createdAt: DOC.meta.createdAt, updatedAt: DOC.meta.updatedAt,
+      thumb: thumbCache.get(DOC.meta.id) || null,
+      data: cleanDocData(DOC),
+    });
+    lsSet(LAST_DOC_KEY, DOC.meta.id);
+    dirty = false;
+  }catch(err){
+    console.warn('자동 저장 실패', err);
+    toast('⚠ 자동 저장 실패 — HTML 파일 받기로 백업해 두세요');
+  }
+}
+// 탭 이탈/숨김 시 미저장분 플러시 (베스트 에포트)
+window.addEventListener('beforeunload', ()=>{ if(dirty) saveDoc(); });
+document.addEventListener('visibilitychange', ()=>{ if(document.hidden && dirty) saveDoc(); });
+
+/* --- 문서 열기/가져오기 --- */
+function openDocData(raw){
+  DOC = migrateDoc(raw);
+  lsSet(LAST_DOC_KEY, DOC.meta.id);
+  idx = 0;
+  renderDeck();
+}
+function extractAppData(htmlText){
+  const m = /\/\*__DATA_START__\*\/([\s\S]*?)\/\*__DATA_END__\*\//.exec(htmlText);
+  if(!m) return null;
+  const im = /const APP_DATA\s*=\s*([\s\S]*)$/.exec(m[1].trim());
+  if(!im) return null;
+  let lit = im[1].trim();
+  if(lit.endsWith(';')) lit = lit.slice(0, -1);
+  try{ return JSON.parse(lit); }catch(_){ return null; }
+}
+async function importHtmlFile(file){
+  const text = await file.text();
+  const raw = extractAppData(text);
+  if(!raw){ toast('⚠ 가져올 수 없는 파일이에요 (HTML 파일 받기로 저장한 파일만 가능)'); return; }
+  const d = migrateDoc(raw);
+  d.meta.id = newDocId();                            // 항상 새 문서로 (충돌 방지)
+  d.meta.updatedAt = Date.now();
+  DOC = d;
+  idx = 0;
+  renderDeck();
+  await saveDoc();
+  toast('가져오기 완료 — 새 문서로 저장했어요');
+}
+
+/* --- 부팅: 저장소에서 문서 복원 → 렌더 --- */
+async function boot(){
+  db = await openDb();
+  storageOk = !!db;
+  if(!storageOk){
+    toast('⚠ 브라우저 저장소를 쓸 수 없어 자동 저장이 꺼졌어요 (HTML 파일 받기는 가능)');
+    renderDeck();
+    return;
+  }
+  try{
+    if(EMBEDDED_HAS_META){
+      // 다운로드했던 파일을 다시 연 경우
+      const existing = await dbGet('docs', DOC.meta.id);
+      if(existing){ DOC = migrateDoc(existing.data); }   // DB 쪽이 더 최신
+      else { await saveDoc(); }                          // 새 문서로 등록
+      lsSet(LAST_DOC_KEY, DOC.meta.id);
+    } else {
+      // 원본 앱: 마지막 문서 → 최근 문서 → 시드로 첫 문서 생성
+      const lastId = lsGet(LAST_DOC_KEY);
+      let rec = lastId ? await dbGet('docs', lastId).catch(()=>null) : null;
+      if(!rec){
+        const all = await dbGetAll('docs').catch(()=>[]);
+        rec = (all && all.length) ? all.sort((a,b)=>b.updatedAt - a.updatedAt)[0] : null;
+      }
+      if(rec){ DOC = migrateDoc(rec.data); lsSet(LAST_DOC_KEY, DOC.meta.id); }
+      else { await saveDoc(); }
+    }
+  }catch(err){
+    console.warn('부팅 저장소 오류', err);
+  }
+  renderDeck();
+}
+boot();
 </script>
 </body>
 </html>
