@@ -366,6 +366,66 @@
   .theme-foot{ padding:9px 12px; border-top:1px solid var(--ui-border); display:flex; justify-content:space-between; align-items:center; }
   .theme-foot span{ font-size:11px; color:var(--ui-mute); }
 
+  /* ===== 내 작업 (문서 관리) ===== */
+  .home-panel{ display:none; position:fixed; inset:0; z-index:150; background:var(--ui-bg); overflow:auto; }
+  .home-panel.on{ display:block; }
+  .home-head{
+    position:sticky; top:0; z-index:5; display:flex; align-items:center; gap:12px;
+    padding:16px 24px; background:rgba(248,245,238,.95); backdrop-filter:blur(10px);
+    border-bottom:1px solid var(--ui-border);
+  }
+  .home-head h2{ font-size:17px; color:var(--ui-ink); }
+  .home-usage{ font-size:12px; color:var(--ui-mute); }
+  .home-grid{
+    display:grid; grid-template-columns:repeat(auto-fill, minmax(190px, 1fr));
+    gap:18px; padding:22px 24px 40px; max-width:1200px; margin:0 auto;
+  }
+  .doc-card{
+    background:var(--ui-surface); border:1px solid var(--ui-border); border-radius:14px;
+    padding:10px; display:flex; flex-direction:column; gap:8px; transition:.12s;
+  }
+  .doc-card:hover{ box-shadow:0 10px 28px rgba(120,100,70,.18); }
+  .doc-card.cur{ border-color:var(--ui-accent); box-shadow:0 0 0 2px rgba(160,125,56,.25); }
+  .doc-thumb{
+    aspect-ratio:4/5; border-radius:9px; overflow:hidden; background:#eee7d8;
+    display:flex; align-items:center; justify-content:center;
+    cursor:pointer; color:var(--ui-mute); font-size:12px;
+  }
+  .doc-thumb img{ width:100%; height:100%; object-fit:cover; display:block; }
+  .doc-title{
+    font-family:var(--font); font-size:13.5px; font-weight:700; color:var(--ui-ink);
+    border:1px solid transparent; border-radius:7px; padding:4px 6px; background:transparent;
+  }
+  .doc-title:hover{ border-color:var(--ui-border); background:#fff; }
+  .doc-title:focus{ outline:none; border-color:var(--ui-accent); background:#fff; }
+  .doc-meta{ font-size:11.5px; color:var(--ui-mute); padding:0 6px; }
+  .doc-acts{ display:flex; gap:6px; }
+  .btn.danger{ color:var(--ui-danger); }
+  .btn.danger.armed{ background:var(--ui-danger); color:#fff; border-color:var(--ui-danger); }
+  .home-empty{ grid-column:1/-1; text-align:center; color:var(--ui-mute); padding:60px 0; }
+
+  /* ===== 버전(스냅샷) 패널 ===== */
+  .ver-panel{
+    display:none; position:fixed; z-index:120; right:20px;
+    top:calc(var(--tbH2, var(--tbH,56px)) + 10px);
+    width:330px; max-height:70vh; overflow:hidden;
+    background:var(--ui-surface); border:1px solid var(--ui-border);
+    border-radius:14px; box-shadow:0 20px 50px rgba(120,100,70,.30);
+    flex-direction:column;
+  }
+  .ver-panel.on{ display:flex; }
+  .ver-head{ padding:12px; border-bottom:1px solid var(--ui-border); display:flex; align-items:center; justify-content:space-between; }
+  .ver-head b{ font-size:14px; color:var(--ui-accent); }
+  .ver-head span{ font-size:11px; color:var(--ui-mute); }
+  .ver-list{ overflow-y:auto; padding:6px 12px; }
+  .ver-row{ display:flex; align-items:center; gap:8px; padding:8px 0; border-bottom:1px dashed var(--ui-border); }
+  .ver-row:last-child{ border-bottom:none; }
+  .ver-info{ flex:1 1 auto; min-width:0; }
+  .ver-when{ font-size:12.5px; font-weight:700; color:var(--ui-ink); }
+  .ver-label{ font-size:11px; color:var(--ui-mute); }
+  .ver-empty{ padding:24px 0; text-align:center; color:var(--ui-mute); font-size:12.5px; }
+  .ver-foot{ padding:9px 12px; border-top:1px solid var(--ui-border); display:flex; justify-content:flex-end; }
+
   /* ===== 토스트 ===== */
   .toast{
     position:fixed; z-index:200; left:50%; bottom:32px;
@@ -396,6 +456,8 @@
   <!-- ===== 컨트롤 바 ===== -->
   <div class="toolbar">
     <div class="brand-mark">삼신<span>노트</span> · 카드뉴스 에디터</div>
+    <button class="btn" id="homeBtn">📁 내 작업</button>
+    <button class="btn" id="verBtn">🕘 버전</button>
     <div class="spacer"></div>
     <button class="btn" id="editToggle">✏️ 편집 모드</button>
     <button class="btn" id="prev">← 이전</button>
@@ -487,6 +549,26 @@
     <div class="theme-presets" id="themePresets"></div>
     <div class="theme-rows" id="themeRows"></div>
     <div class="theme-foot"><span>바로 미리보기 · 자동 저장</span><button class="btn sm2" id="themeReset">기본값으로</button></div>
+  </div>
+
+  <!-- ===== 내 작업 (문서 관리) ===== -->
+  <div class="home-panel" id="homePanel">
+    <div class="home-head">
+      <h2>📁 내 작업</h2>
+      <span class="home-usage" id="homeUsage"></span>
+      <div class="spacer"></div>
+      <button class="btn primary" id="homeNew">＋ 새 카드뉴스</button>
+      <label class="btn" style="cursor:pointer">HTML 가져오기<input type="file" id="homeImport" accept=".html,text/html" hidden></label>
+      <button class="btn" id="homeClose">✕ 닫기</button>
+    </div>
+    <div class="home-grid" id="homeGrid"></div>
+  </div>
+
+  <!-- ===== 버전(스냅샷) 패널 ===== -->
+  <div class="ver-panel" id="verPanel">
+    <div class="ver-head"><b>🕘 버전 기록</b><span>자동 스냅샷 · 복원 시 안전 백업</span></div>
+    <div class="ver-list" id="verList"></div>
+    <div class="ver-foot"><button class="btn sm2" id="verSnapNow">지금 스냅샷 만들기</button></div>
   </div>
 
   <!-- ===== 토스트 ===== -->
@@ -1958,7 +2040,7 @@ const ovText = document.getElementById('ovText');
 const ovBar = document.getElementById('ovBar');
 const OUT_SCALE = 2; // 1080x1350 의 2배 = 2160x2700 고해상도
 
-async function captureCard(i){
+async function captureCard(i, scale = OUT_SCALE){
   const card = cards[i];
   const wasActive = card.classList.contains('active');
   const prevTransform = deck.style.transform;
@@ -1978,7 +2060,7 @@ async function captureCard(i){
   const canvas = await html2canvas(card, {
     width: CARD_W, height: CARD_H,
     windowWidth: CARD_W, windowHeight: CARD_H,
-    scale: OUT_SCALE,
+    scale,
     backgroundColor: null,
     useCORS: true,
     logging: false,
@@ -2031,6 +2113,7 @@ document.getElementById('exportAll').onclick = async ()=>{
       await new Promise(r=>setTimeout(r, 500));  // 브라우저 다중 다운로드 간격
       URL.revokeObjectURL(a.href);
     }
+    snapshotDoc('내보내기 시점').catch(()=>{});
   }catch(err){ alert('내보내기 실패: '+err.message); }
   finally{ setTimeout(()=>{overlay.classList.remove('on'); ovBar.style.width='0';},300); show(idx); }
 };
@@ -2039,17 +2122,23 @@ document.getElementById('exportAll').onclick = async ()=>{
 function cleanDocData(d){
   return JSON.parse(JSON.stringify(d, (k,v)=> (k==='_natW'||k==='_natH') ? undefined : v));
 }
+function buildHtmlBlob(docData){
+  const dataJs = '/*__DATA_START__*/\nconst APP_DATA = ' + JSON.stringify(docData) + ';\n/*__DATA_END__*/';
+  const out = ORIGINAL_HTML.replace(/\/\*__DATA_START__\*\/[\s\S]*?\/\*__DATA_END__\*\//, function(){ return dataJs; });
+  return new Blob([out], {type:'text/html;charset=utf-8'});
+}
+function downloadBlob(blob, name){
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  a.click();
+  setTimeout(function(){ URL.revokeObjectURL(a.href); }, 1000);
+}
 document.getElementById('downloadHtml').onclick = function(){
   // 편집 내용은 input 이벤트로 이미 DOC에 반영됨. 내부 캐시(_natW 등)만 제거.
   DOC.meta.updatedAt = Date.now();
-  const dataJs = '/*__DATA_START__*/\nconst APP_DATA = ' + JSON.stringify(cleanDocData(DOC)) + ';\n/*__DATA_END__*/';
-  const out = ORIGINAL_HTML.replace(/\/\*__DATA_START__\*\/[\s\S]*?\/\*__DATA_END__\*\//, function(){ return dataJs; });
-  const blob = new Blob([out], {type:'text/html;charset=utf-8'});
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'samsinnote_cardnews.html';
-  a.click();
-  setTimeout(function(){ URL.revokeObjectURL(a.href); }, 1000);
+  downloadBlob(buildHtmlBlob(cleanDocData(DOC)), 'samsinnote_cardnews.html');
+  snapshotDoc('내보내기 시점').catch(()=>{});
 };
 
 /* =========================================================
@@ -2106,8 +2195,10 @@ function docTitle(d){
 
 /* --- 자동 저장 (800ms 디바운스) --- */
 let dirty = false, saveTimer = null;
+let thumbStale = true;                              // 썸네일 재생성 필요 여부
+let dirtySinceSnap = false;                         // 마지막 스냅샷 이후 변경 여부
 markDirty = function(){
-  dirty = true;
+  dirty = true; thumbStale = true; dirtySinceSnap = true;
   DOC.meta.updatedAt = Date.now();
   clearTimeout(saveTimer);
   saveTimer = setTimeout(saveDoc, 800);
@@ -2163,6 +2254,226 @@ async function importHtmlFile(file){
   toast('가져오기 완료 — 새 문서로 저장했어요');
 }
 
+/* =========================================================
+   썸네일 (표지 저해상 캡처, 60초 주기 · 필요 시에만)
+   ========================================================= */
+let thumbBusy = false;
+async function genThumb(force){
+  if(!storageOk || thumbBusy) return;
+  if(!force && (!thumbStale || editing || document.hidden)) return;
+  thumbBusy = true;
+  try{
+    const canvas = await captureCard(0, 0.12);
+    thumbCache.set(DOC.meta.id, canvas.toDataURL('image/jpeg', 0.72));
+    thumbStale = false;
+    await saveDoc();
+  }catch(_){}
+  thumbBusy = false;
+}
+setInterval(()=>genThumb(false), 60000);
+
+/* =========================================================
+   버전 스냅샷 — ⓐ 변경 후 5분 경과 ⓑ 복원 직전 ⓒ 내보내기 시점
+   문서당 최근 30개 유지 (저장 공간 60% 초과 시 15개)
+   ========================================================= */
+async function snapshotDoc(label){
+  if(!storageOk) return;
+  try{
+    await dbPut('snapshots', { docId: DOC.meta.id, ts: Date.now(), label: label || '자동', data: cleanDocData(DOC) });
+    dirtySinceSnap = false;
+    await pruneSnapshots(DOC.meta.id);
+  }catch(err){ console.warn('스냅샷 실패', err); }
+}
+async function pruneSnapshots(docId){
+  const list = await dbByDoc(docId);
+  let keep = 30;
+  if(navigator.storage && navigator.storage.estimate){
+    try{
+      const est = await navigator.storage.estimate();
+      if(est.quota && est.usage / est.quota > 0.6) keep = 15;
+    }catch(_){}
+  }
+  if(list.length > keep){
+    list.sort((a,b)=>a.ts - b.ts);
+    for(const s of list.slice(0, list.length - keep)) await dbDel('snapshots', s.snapId);
+  }
+}
+setInterval(()=>{ if(dirtySinceSnap && storageOk) snapshotDoc('자동'); }, 5 * 60 * 1000);
+
+/* =========================================================
+   내 작업 (문서 관리) 패널
+   ========================================================= */
+const homeBtn = document.getElementById('homeBtn');
+const homePanel = document.getElementById('homePanel');
+const homeGrid = document.getElementById('homeGrid');
+
+function fmtDate(ts){
+  const d = new Date(ts);
+  return `${d.getMonth()+1}월 ${d.getDate()}일 ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+}
+function escapeAttr(s){
+  return String(s || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
+}
+async function renderHome(){
+  let docs = [];
+  try{ docs = await dbGetAll('docs'); }catch(_){}
+  docs.sort((a,b)=>b.updatedAt - a.updatedAt);
+  let usage = '';
+  if(navigator.storage && navigator.storage.estimate){
+    try{
+      const est = await navigator.storage.estimate();
+      usage = `저장 공간 ${(est.usage/1048576).toFixed(1)}MB 사용`;
+    }catch(_){}
+  }
+  document.getElementById('homeUsage').textContent = usage;
+  homeGrid.innerHTML = docs.map(d=>`
+    <div class="doc-card${d.id === DOC.meta.id ? ' cur' : ''}" data-id="${d.id}">
+      <div class="doc-thumb" data-act="open">${d.thumb ? `<img src="${d.thumb}" alt="">` : '<span>미리보기 없음</span>'}</div>
+      <input class="doc-title" value="${escapeAttr(d.title)}" title="클릭해서 이름 변경">
+      <div class="doc-meta">${fmtDate(d.updatedAt)}${d.id === DOC.meta.id ? ' · 편집 중' : ''}</div>
+      <div class="doc-acts">
+        <button class="btn sm2" data-act="open">열기</button>
+        <button class="btn sm2" data-act="dup" title="복제">⧉</button>
+        <button class="btn sm2" data-act="down" title="HTML로 내보내기">⬇</button>
+        <button class="btn sm2 danger" data-act="del" title="삭제 (두 번 눌러 확인)">🗑</button>
+      </div>
+    </div>`).join('') || '<div class="home-empty">저장된 작업이 없습니다</div>';
+}
+homeBtn.addEventListener('click', async ()=>{
+  closePanels();
+  commitTyping();
+  await saveDoc();
+  await genThumb(true);
+  await renderHome();
+  homePanel.classList.add('on');
+});
+document.getElementById('homeClose').addEventListener('click', ()=>homePanel.classList.remove('on'));
+document.addEventListener('keydown', e=>{
+  if(e.key === 'Escape' && homePanel.classList.contains('on')) homePanel.classList.remove('on');
+});
+document.getElementById('homeNew').addEventListener('click', async ()=>{
+  await saveDoc();
+  DOC = newDocFromTemplate();
+  idx = 0;
+  renderDeck();
+  await saveDoc();
+  homePanel.classList.remove('on');
+  toast('새 카드뉴스를 시작했어요');
+});
+document.getElementById('homeImport').addEventListener('change', async e=>{
+  const f = e.target.files[0]; e.target.value = '';
+  if(!f) return;
+  await saveDoc();
+  await importHtmlFile(f);
+  homePanel.classList.remove('on');
+});
+homeGrid.addEventListener('click', async e=>{
+  const cardEl = e.target.closest('.doc-card'); if(!cardEl) return;
+  const id = cardEl.dataset.id;
+  const act = e.target.closest('[data-act]'); if(!act) return;
+  const kind = act.dataset.act;
+  if(kind === 'open'){
+    if(id !== DOC.meta.id){
+      await saveDoc();
+      const rec = await dbGet('docs', id);
+      if(rec){ openDocData(rec.data); toast(`'${rec.title}' 열기`); }
+    }
+    homePanel.classList.remove('on');
+  } else if(kind === 'dup'){
+    const rec = await dbGet('docs', id); if(!rec) return;
+    const d = migrateDoc(rec.data);
+    d.meta.id = newDocId();
+    d.meta.title = (rec.title || docTitle(d)) + ' 복사본';
+    d.meta.createdAt = d.meta.updatedAt = Date.now();
+    await dbPut('docs', { id:d.meta.id, title:d.meta.title, createdAt:d.meta.createdAt,
+                          updatedAt:d.meta.updatedAt, thumb:rec.thumb || null, data:cleanDocData(d) });
+    renderHome();
+    toast('복제했어요');
+  } else if(kind === 'down'){
+    const rec = await dbGet('docs', id); if(!rec) return;
+    const safe = (rec.title || 'cardnews').replace(/[\\/:*?"<>|]/g,'_').slice(0,30);
+    downloadBlob(buildHtmlBlob(rec.data), `samsinnote_${safe}.html`);
+  } else if(kind === 'del'){
+    if(act.classList.contains('armed')){
+      await dbDel('docs', id);
+      const snaps = await dbByDoc(id).catch(()=>[]);
+      for(const s of snaps) await dbDel('snapshots', s.snapId);
+      if(id === DOC.meta.id){
+        const all = await dbGetAll('docs').catch(()=>[]);
+        if(all.length){ openDocData(all.sort((a,b)=>b.updatedAt - a.updatedAt)[0].data); }
+        else { DOC = newDocFromTemplate(); idx = 0; renderDeck(); await saveDoc(); }
+      }
+      renderHome();
+      toast('삭제했어요');
+    } else {
+      act.classList.add('armed'); act.textContent = '확인?';
+      setTimeout(()=>{ act.classList.remove('armed'); act.textContent = '🗑'; }, 2500);
+    }
+  }
+});
+homeGrid.addEventListener('change', async e=>{
+  const inp = e.target.closest('.doc-title'); if(!inp) return;
+  const id = e.target.closest('.doc-card').dataset.id;
+  const title = inp.value.trim();
+  const rec = await dbGet('docs', id); if(!rec) return;
+  rec.title = title || rec.title;
+  if(rec.data && rec.data.meta) rec.data.meta.title = rec.title;
+  await dbPut('docs', rec);
+  if(id === DOC.meta.id) DOC.meta.title = rec.title;
+  renderHome();
+});
+
+/* =========================================================
+   버전(스냅샷) 패널
+   ========================================================= */
+const verBtn = document.getElementById('verBtn');
+const verPanel = document.getElementById('verPanel');
+const verList = document.getElementById('verList');
+registerPanel('ver', verPanel, verBtn);
+
+async function renderVerList(){
+  let list = [];
+  try{ list = await dbByDoc(DOC.meta.id); }catch(_){}
+  list.sort((a,b)=>b.ts - a.ts);
+  verList.innerHTML = list.map(s=>`
+    <div class="ver-row" data-snap="${s.snapId}">
+      <div class="ver-info">
+        <div class="ver-when">${fmtDate(s.ts)}</div>
+        <div class="ver-label">${s.label}</div>
+      </div>
+      <button class="btn sm2" data-act="restore">복원</button>
+      <button class="btn sm2 danger" data-act="delsnap" title="삭제 (두 번 눌러 확인)">🗑</button>
+    </div>`).join('') || '<div class="ver-empty">아직 스냅샷이 없어요.<br>변경 후 5분마다 · 내보내기 시점에 자동 생성됩니다.</div>';
+}
+verBtn.addEventListener('click', ()=>{ if(togglePanel('ver')) renderVerList(); });
+document.getElementById('verSnapNow').addEventListener('click', async ()=>{
+  commitTyping();
+  await snapshotDoc('수동');
+  renderVerList();
+  toast('스냅샷을 만들었어요');
+});
+verList.addEventListener('click', async e=>{
+  const row = e.target.closest('.ver-row'); if(!row) return;
+  const act = e.target.closest('[data-act]'); if(!act) return;
+  const snapId = +row.dataset.snap;
+  if(act.dataset.act === 'restore'){
+    const s = await dbGet('snapshots', snapId); if(!s) return;
+    await snapshotDoc('복원 전 자동 백업');
+    openDocData(s.data);
+    await saveDoc();
+    closePanels();
+    toast(fmtDate(s.ts) + ' 시점으로 복원했어요');
+  } else if(act.dataset.act === 'delsnap'){
+    if(act.classList.contains('armed')){
+      await dbDel('snapshots', snapId);
+      renderVerList();
+    } else {
+      act.classList.add('armed'); act.textContent = '확인?';
+      setTimeout(()=>{ act.classList.remove('armed'); act.textContent = '🗑'; }, 2500);
+    }
+  }
+});
+
 /* --- 부팅: 저장소에서 문서 복원 → 렌더 --- */
 async function boot(){
   db = await openDb();
@@ -2194,6 +2505,7 @@ async function boot(){
     console.warn('부팅 저장소 오류', err);
   }
   renderDeck();
+  setTimeout(()=>genThumb(true), 1500);            // 폰트·이미지 로드 후 첫 썸네일
 }
 boot();
 </script>
