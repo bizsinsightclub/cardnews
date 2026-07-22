@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>삼신노트 카드뉴스 — 글래스 웹 에디터</title>
+<title>삼신노트 카드뉴스 — 배란억제제 편</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Nanum+Myeongjo:wght@400;700&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -345,36 +345,42 @@
 "use strict";
 /* ════════════════ 0. 기본 데이터 ════════════════ */
 const DEFAULT=[
- {name:'삼신노트_퍼고베리스_01', cover:true, handle:'@samsin.note', content:[
-   {type:'eyebrow', html:'배란유도주사계의 에르메스'},
-   {type:'hcover', html:'퍼고베리스'},
-   {type:'qsub',   html:'왜 난임병원에서는<br><span class="o">이 주사</span>를 특별하게 생각할까요?'},
+ {name:'삼신노트_배란억제제_01', cover:true, handle:'@samsin.note', content:[
+   {type:'h2',    html:'과배란 유도 중인데<br>배란억제제를 맞는다구요?'},
+   {type:'bd',    html:'가니레버 · 오가루트란 · 세트로타이드'},
+   {type:'qsub',  html:'임신하려고 주사 맞는데<br>왜 배란은 막는 걸까요?'},
  ]},
- {name:'삼신노트_퍼고베리스_02', handle:'2 / 06', content:[
-   {type:'qhead', html:'퍼고베리스가<br><span class="o">특별한 이유</span>'},
-   {type:'bd',    html:'대부분의 배란유도주사는 <b>FSH 단독</b> 성분이거나 FSH 위주로 구성됩니다.<br><br>하지만 퍼고베리스는 <b>FSH 150IU + LH 75IU</b>를 한 번에 투여합니다.'},
-   {type:'ratio', html:'FSH : LH = 2 : 1 고정배합'},
+ {name:'삼신노트_배란억제제_02', handle:'2 / 06', content:[
+   {type:'qhead', html:'배란억제제란?'},
+   {type:'h4',    html:'대표적인 배란억제제'},
+   {type:'bd',    html:'✔ 가니레버<br>✔ 오가루트란<br>✔ 세트로타이드'},
+   {type:'bd',    html:'이 약들은 시험관 시술 중<br>‘조기 배란’을 막기 위해 사용됩니다.'},
  ]},
- {name:'삼신노트_퍼고베리스_03', handle:'3 / 06', content:[
-   {type:'qhead', html:'왜 LH를<br>굳이 <span class="o">추가할까?</span>'},
-   {type:'vsrow', html:'<div class="vscol"><div class="tag">FSH</div><p>난포를 키우는 호르몬</p></div><div class="vscol act"><div class="tag">LH</div><p>난포 성숙과<br>에스트로겐 생성에 관여하는 호르몬</p></div>'},
-   {type:'bd',    html:'대부분의 환자는 FSH만으로도 난포가 성장합니다.<br><br>하지만 일부 환자에서는 <b>LH 보충 전략</b>이 고려될 수 있습니다. <span class="o">예) 고령·저반응 환자 등</span>'},
+ {name:'삼신노트_배란억제제_03', handle:'3 / 06', content:[
+   {type:'qhead', html:'잠깐,<br>배란시키려고<br>하는 거 아니었나요?'},
+   {type:'bd',    html:'맞습니다.<br>하지만 시험관 시술에서는 배란 자체보다'},
+   {type:'qsub',  html:'“채취 전까지 난자를 지키는 것”<br>이 더 중요합니다.'},
+   {type:'bd',    html:'열심히 키운 난자가 채취 전에 배란되면<br>난자를 회수하지 못할 수도 있습니다.'},
  ]},
- {name:'삼신노트_퍼고베리스_04', handle:'4 / 06', content:[
-   {type:'qhead', html:'왜 <span class="o">"에르메스"</span>라고<br>불릴까?'},
-   {type:'bd',    html:'퍼고베리스는 FSH와 LH 모두 <b>유전자재조합 기술</b>로 생산됩니다.'},
-   {type:'eq',    html:'복잡한 제조 공정 + FSH·LH 복합 제제 <span class="o">= 높은 약가</span>'},
-   {type:'bd',    html:'그래서 환자들 사이에서는<br><b>‘배란유도주사계의 에르메스’</b>라는 별명이 붙기도 했습니다.'},
+ {name:'삼신노트_배란억제제_04', handle:'4 / 06', content:[
+   {type:'qhead', html:'배란억제제는<br>어떻게 작용할까?'},
+   {type:'bd',    html:'가니레버 · 오가루트란 · 세트로타이드는 모두'},
+   {type:'h3',    html:'GnRH 길항제<br>(GnRH Antagonist)'},
+   {type:'bd',    html:'배란 신호를 전달하는 LH 분비를 억제하여<br>조기 배란을 막아줍니다.'},
+   {type:'qsub',  html:'쉽게 말하면,<br>“아직 배란하지 마!”<br>라는 신호를 보내는 약입니다.'},
  ]},
- {name:'삼신노트_퍼고베리스_05', handle:'5 / 06', content:[
-   {type:'qhead', html:'주<span class="o">(Vial)</span> vs 펜<span class="o">(Pen)</span>'},
-   {type:'vsrow', html:'<div class="vscol act"><div class="tag">주 (Vial)</div><p>✔ 일정 조건에서 건강보험 적용 가능<br>✔ 최대 2 vial까지 급여 적용 대상 가능<br>✔ LH 수치 기준 완화</p></div><div class="vscol"><div class="tag">펜 (Pen)</div><p>✔ 건강보험 적용 기준 없음<br>✔ 비급여 약제</p></div>'},
-   {type:'disc',  html:'※ 실제 급여 적용 여부는 개인의 급여 기준에 따라 달라질 수 있습니다.'},
+ {name:'삼신노트_배란억제제_05', handle:'5 / 06', content:[
+   {type:'qhead', html:'그럼 난포 성장은<br>멈추나요?'},
+   {type:'bd',    html:'아닙니다.<br>배란억제제는 난포 성장을 멈추는 약이 아닙니다.'},
+   {type:'bd',    html:'FSH 주사로 난포는 계속 자라고<br>배란만 잠시 보류됩니다.'},
+   {type:'qsub',  html:'난포는 키우고,<br>배란은 기다리는 것.'},
  ]},
- {name:'삼신노트_퍼고베리스_06', handle:'6 / 06', content:[
+ {name:'삼신노트_배란억제제_06', handle:'6 / 06', content:[
    {type:'qhead',     html:'약사가 알려주는<br>한 줄 정리'},
-   {type:'bd',        html:'퍼고베리스는 <b>"더 강한 배란유도주사"가 아닙니다.</b><br><br>FSH와 LH를 <span class="o">150 : 75 (2 : 1)</span> 비율로 함께 공급하는 <b>FSH·LH 복합 배란유도제</b>입니다.'},
-   {type:'eq',        html:'💬 다음 편 — <span class="o">"과배란 중인데 배란억제제를 맞는다구요?"</span><br>가니레버 · 오가루트란 · 세트로타이드 편'},
+   {type:'qsub',      html:'배란억제제는<br>배란을 방해하는 약이 아닙니다.'},
+   {type:'bd',        html:'예정된 채취일까지<br>난자를 안전하게 지켜주는 약입니다.'},
+   {type:'bd',        html:'참고로 가니레버 · 오가루트란 · 세트로타이드는<br>모두 같은 목적의 배란억제제입니다.'},
+   {type:'bd',        html:'💬 궁금한 난임약이 있다면 댓글로 남겨주세요.'},
    {type:'brandline', html:'삼신노트 · 근거로 곁을 지킵니다'},
  ]},
 ];
@@ -416,7 +422,7 @@ const TEXT_TYPES=[
 ];
 
 /* ════════════════ 1. 저장소 + 레이아웃 베이크 ════════════════ */
-const KEY='samsin_cardnews_v3';
+const KEY='samsin_cardnews2_v1';
 let state, cur=0;
 function rid(){return Math.random().toString(36).slice(2,8)}
 function dotsHTML(on,total){ return Array.from({length:total},(_,i)=>`<i class="${i===on?'on':''}"></i>`).join(''); }
@@ -740,7 +746,7 @@ document.addEventListener('mousedown',e=>{ if(addmenu.style.display==='block'&&!
   if(imgpanel.style.display==='block'&&!e.target.closest('#imgpanel')&&!e.target.closest('[data-tool=image]')) imgpanel.style.display='none';
   if(typemenu.style.display==='block'&&!e.target.closest('#typemenu')&&!e.target.closest('[data-a=type]')) typemenu.style.display='none'; });
 
-function newSlideObj(n){ const v=VIEW(); return {id:'sl_'+rid(),name:'삼신노트_퍼고베리스_'+String(n).padStart(2,'0'),cover:false,bg:null,image:null,blocks:[
+function newSlideObj(n){ const v=VIEW(); return {id:'sl_'+rid(),name:'삼신노트_배란억제제_'+String(n).padStart(2,'0'),cover:false,bg:null,image:null,blocks:[
   {id:'b'+rid(),type:'brand',html:'삼신<b>노트</b>',x:84,y:92,w:0,fontPx:null,bg:null},
   {id:'b'+rid(),type:'handle',html:n+' / '+String(n).padStart(2,'0'),x:850,y:96,w:0,fontPx:null,bg:null},
   {id:'b'+rid(),type:'qhead',html:'새 슬라이드 제목',x:84,y:520,w:0,fontPx:null,bg:null},
