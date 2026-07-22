@@ -377,6 +377,7 @@
       <button class="btn sm2" id="ccRemove">이미지 제거</button>
       <button class="btn sm2" id="ccFit">꽉 채우기</button>
       <label class="cc">확대 <input type="range" id="ccZoom" min="0.4" max="1.8" step="0.02" value="1"></label>
+      <label class="cc">가로 <input type="range" id="ccPx" min="0" max="100" value="50"></label>
       <label class="cc">세로 <input type="range" id="ccPy" min="0" max="100" value="50"></label>
       <label class="cc">오버레이 <input type="range" id="ccOverlay" min="0" max="1" step="0.05" value="0.85"></label>
     </div>
@@ -571,44 +572,83 @@ const APP_DATA = {
 };
 /*__DATA_END__*/
 
-/* ===== 이미지 상태 정규화 ===== */
-const TOTAL = 1 + APP_DATA.cards.length;   // 표지 1장 + 본문
-document.getElementById('total').textContent = TOTAL;
+/* =========================================================
+   문서 정규화 · 마이그레이션 (모든 로더가 경유: 부팅/가져오기/복원)
+   - v1(구 0722 다운로드 파일): flat theme → { global, cards }
+   - schema 2 보장: meta / theme.global·cards / floats(Phase 2 예약)
+   ========================================================= */
 const IMG_DEFAULT = { src:'', fit:'cover', zoom:1, px:50, py:50, overlay:0.85 };
-if(!Array.isArray(APP_DATA.images)) APP_DATA.images = [];
-for(let i=0;i<TOTAL;i++){
-  APP_DATA.images[i] = Object.assign({}, IMG_DEFAULT, APP_DATA.images[i] || {});
+function newDocId(){ return 'd_' + Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
+
+function migrateDoc(raw){
+  const d = (raw && typeof raw === 'object') ? raw : {};
+  d.cover = Object.assign({ brand:'', handle:'', q:'', sub:'' }, d.cover || {});
+  d.cards = Array.isArray(d.cards) ? d.cards : [];
+  // 테마: v1 flat({--var:hex}) → v2({global, cards})
+  let th = (d.theme && typeof d.theme === 'object') ? d.theme : {};
+  if(!('global' in th) && !('cards' in th)) th = { global: th, cards: {} };
+  th.global = (th.global && typeof th.global === 'object') ? th.global : {};
+  th.cards  = (th.cards  && typeof th.cards  === 'object') ? th.cards  : {};
+  d.theme = th;
+  const now = Date.now();
+  d.meta = Object.assign({ id:newDocId(), title:'', createdAt:now, updatedAt:now }, d.meta || {});
+  // 이미지: 렌더 순서(표지+본문) 길이로 정규화
+  const total = 1 + d.cards.length;
+  if(!Array.isArray(d.images)) d.images = [];
+  for(let i=0;i<total;i++) d.images[i] = Object.assign({}, IMG_DEFAULT, d.images[i] || {});
+  d.images.length = total;
+  // 자유 배치 요소(Phase 2): 카드별 배열
+  if(!Array.isArray(d.floats)) d.floats = [];
+  for(let i=0;i<total;i++) d.floats[i] = Array.isArray(d.floats[i]) ? d.floats[i] : [];
+  d.floats.length = total;
+  d.schema = 2;
+  return d;
 }
 
-/* ===== 렌더링 ===== */
+// 내장 시드(새 문서 템플릿) — 마이그레이션으로 변형되기 전 원형 보존
+const TEMPLATE_JSON = JSON.stringify(APP_DATA);
+function newDocFromTemplate(){ return migrateDoc(JSON.parse(TEMPLATE_JSON)); }
+
+// 현재 열려 있는 문서 (문서 전환 시 재할당)
+let DOC = migrateDoc(APP_DATA);
+
+// 자동 저장 트리거 — 저장소 섹션에서 실제 구현으로 재정의됨
+let markDirty = function(){};
+
+/* ===== 렌더링 (문서 전환·스냅샷 복원 시 재호출 가능) ===== */
 const deck = document.getElementById('deck');
+let TOTAL = 0;
+let cards = [];
 
-APP_DATA.cards; // (참조 유지)
-for(let i=0;i<TOTAL;i++){
-  const el = document.createElement('section');
-  el.dataset.idx = i;
+function renderDeck(){
+  TOTAL = 1 + DOC.cards.length;
+  document.getElementById('total').textContent = TOTAL;
+  deck.innerHTML = '';
+  for(let i=0;i<TOTAL;i++){
+    const el = document.createElement('section');
+    el.dataset.idx = i;
 
-  if(i === 0){
-    // 표지: 이미지 레이어 + 오버레이 + 좌측정렬 텍스트
-    el.className = 'card active cover-card';
-    el.innerHTML = `
+    if(i === 0){
+      // 표지: 이미지 레이어 + 오버레이 + 좌측정렬 텍스트
+      el.className = 'card cover-card';
+      el.innerHTML = `
       <div class="cover-bg"></div>
       <div class="cover-overlay"></div>
       <div class="inner">
         <div class="cover-top">
-          <span class="cv-brand">${APP_DATA.cover.brand}</span>
-          <span class="cv-handle">${APP_DATA.cover.handle}</span>
+          <span class="cv-brand">${DOC.cover.brand}</span>
+          <span class="cv-handle">${DOC.cover.handle}</span>
         </div>
         <div class="main">
-          <div class="cv-q" data-edit="cover.q">${APP_DATA.cover.q}</div>
-          <div class="cv-sub" data-edit="cover.sub">${APP_DATA.cover.sub}</div>
+          <div class="cv-q" data-edit="cover.q">${DOC.cover.q}</div>
+          <div class="cv-sub" data-edit="cover.sub">${DOC.cover.sub}</div>
         </div>
       </div>`;
-  } else {
-    const j = i - 1;                     // 본문 데이터 인덱스
-    const c = APP_DATA.cards[j];
-    el.className = 'card';
-    el.innerHTML = `
+    } else {
+      const j = i - 1;                     // 본문 데이터 인덱스
+      const c = DOC.cards[j];
+      el.className = 'card';
+      el.innerHTML = `
       <div class="cover-bg"></div>
       <div class="cover-overlay"></div>
       <div class="inner">
@@ -624,24 +664,28 @@ for(let i=0;i<TOTAL;i++){
           <div class="sig">삼신<i>노트</i></div>
         </div>
       </div>`;
+    }
+    deck.appendChild(el);
   }
-  deck.appendChild(el);
+  cards = [...deck.querySelectorAll('.card')];
+  // 편집 리스너·contenteditable 재바인딩
+  deck.querySelectorAll('[data-edit]').forEach(el=>{
+    el.addEventListener('input', ()=>writeBack(el));
+    el.setAttribute('contenteditable', editing ? 'true' : 'false');
+  });
+  for(let i=0;i<TOTAL;i++) loadNat(i);
+  show(Math.max(0, Math.min(idx, TOTAL-1)));
 }
 
-const cards = [...document.querySelectorAll('.card')];
-
-/* ===== 편집 내용 → 데이터 반영 (내보내기에 그대로 저장) ===== */
+/* ===== 편집 내용 → 데이터 반영 (자동저장·내보내기에 그대로 저장) ===== */
 function writeBack(el){
   const path = el.dataset.edit;
   const html = el.innerHTML;
-  if(path === 'cover.q'){ APP_DATA.cover.q = html; return; }
-  if(path === 'cover.sub'){ APP_DATA.cover.sub = html; return; }
+  if(path === 'cover.q'){ DOC.cover.q = html; markDirty(); return; }
+  if(path === 'cover.sub'){ DOC.cover.sub = html; markDirty(); return; }
   const m = path.match(/^cards\.(\d+)\.(eyebrow|body)$/);
-  if(m){ APP_DATA.cards[+m[1]][m[2]] = html; }
+  if(m){ DOC.cards[+m[1]][m[2]] = html; markDirty(); }
 }
-document.querySelectorAll('[data-edit]').forEach(el=>{
-  el.addEventListener('input', ()=>writeBack(el));
-});
 
 /* ===== 편집 모드 토글 ===== */
 let editing = false;
@@ -950,7 +994,7 @@ document.addEventListener('mousedown', e=>{
 /* =========================================================
    색상 테마 (팔레트 + HEX 직접 입력)
    · 카드/글자/포인트 색을 :root 변수로 실시간 변경
-   · 변경값은 APP_DATA.theme에 저장 → PNG·HTML 내보내기에 반영
+   · 변경값은 DOC.theme에 저장 → PNG·HTML 내보내기에 반영
    ========================================================= */
 const THEME_VARS = [
   { v:'--page',      label:'페이지 배경',        def:'#e3d7c0' },
@@ -973,8 +1017,6 @@ const THEME_PRESETS = [
   { name:'다크', c:{'--page':'#1c1a17','--ink':'#25221d','--body-ink':'#d8cdba','--ivory':'#f3ebd9','--mute':'#9a8f7c','--sub-ink':'#b8ad99','--gold':'#cbb489','--gold-soft':'#6a5c3f'} },
 ];
 
-if(!APP_DATA.theme || typeof APP_DATA.theme !== 'object') APP_DATA.theme = {};
-
 function normHex(s){
   s = (s || '').trim();
   if(s && s[0] !== '#') s = '#' + s;
@@ -982,17 +1024,18 @@ function normHex(s){
 }
 function currentColor(v){
   const def = (THEME_VARS.find(t=>t.v===v)||{}).def || '#000000';
-  return APP_DATA.theme[v] || def;
+  return DOC.theme.global[v] || def;
 }
 function setThemeVar(v, val){
   const hx = normHex(val);
   if(!hx) return false;
   document.documentElement.style.setProperty(v, hx);
-  APP_DATA.theme[v] = hx;
+  DOC.theme.global[v] = hx;
+  markDirty();
   return true;
 }
 // 저장돼 있던 테마 즉시 적용
-Object.entries(APP_DATA.theme).forEach(([v,val])=>{
+Object.entries(DOC.theme.global).forEach(([v,val])=>{
   if(normHex(val)) document.documentElement.style.setProperty(v, val);
 });
 
@@ -1045,7 +1088,8 @@ themePresets && themePresets.addEventListener('click', e=>{
 // 기본값으로 되돌리기
 themeReset && themeReset.addEventListener('click', ()=>{
   THEME_VARS.forEach(t=>document.documentElement.style.removeProperty(t.v));
-  APP_DATA.theme = {};
+  DOC.theme.global = {};
+  markDirty();
   refreshThemeUI();
   toast('기본 색으로 되돌렸어요');
 });
@@ -1084,10 +1128,11 @@ function show(n){
 /* ===== 카드별 이미지 적용 (비율 유지) ===== */
 function applyCardImg(i){
   const card = cards[i];
+  if(!card) return;
   const bg = card.querySelector('.cover-bg');
   const ov = card.querySelector('.cover-overlay');
-  const im = APP_DATA.images[i];
-  if(!bg) return;
+  const im = DOC.images[i];
+  if(!bg || !im) return;
 
   if(im.src){
     bg.style.backgroundImage = `url("${im.src}")`;
@@ -1113,15 +1158,14 @@ function applyCardImg(i){
 }
 // 이미지 원본 크기를 읽어온 뒤 적용(왜곡 방지의 핵심)
 function loadNat(i){
-  const im = APP_DATA.images[i];
+  const im = DOC.images[i];
+  if(!im){ return; }
   if(!im.src){ applyCardImg(i); return; }
   const img = new Image();
   img.onload = ()=>{ im._natW = img.naturalWidth; im._natH = img.naturalHeight; applyCardImg(i); };
   img.onerror = ()=>{ applyCardImg(i); };
   img.src = im.src;
 }
-// 초기: 저장돼 있던 이미지(base64 등) 모두 로드
-for(let i=0;i<TOTAL;i++){ loadNat(i); }
 
 /* ===== 이미지 컨트롤 (현재 카드에 적용) ===== */
 const ccLabel   = document.getElementById('ccLabel');
@@ -1129,13 +1173,16 @@ const ccFile    = document.getElementById('ccFile');
 const ccRemove  = document.getElementById('ccRemove');
 const ccFit     = document.getElementById('ccFit');
 const ccZoom    = document.getElementById('ccZoom');
+const ccPx      = document.getElementById('ccPx');
 const ccPy      = document.getElementById('ccPy');
 const ccOverlay = document.getElementById('ccOverlay');
 
 function refreshImgCtrl(){
-  const im = APP_DATA.images[idx];
+  const im = DOC.images[idx];
+  if(!im) return;
   ccLabel.textContent = (idx===0 ? '표지 이미지' : `이미지 · ${idx+1} / ${TOTAL}`);
   ccZoom.value    = im.zoom;
+  ccPx.value      = im.px;
   ccPy.value      = im.py;
   ccOverlay.value = im.overlay;
   ccFit.textContent = im.fit === 'cover' ? '꽉 채우기' : '전체 보기';
@@ -1146,28 +1193,30 @@ ccFile.addEventListener('change', e=>{
   const f = e.target.files[0]; if(!f) return;
   const rd = new FileReader();
   rd.onload = ()=>{
-    const im = APP_DATA.images[idx];
+    const im = DOC.images[idx];
     im.src = rd.result; im.fit='cover'; im.zoom=1; im.px=50; im.py=50;
     im._natW = 0; im._natH = 0;
     loadNat(idx);
     refreshImgCtrl();
+    markDirty();
   };
   rd.readAsDataURL(f);
   e.target.value = '';                    // 같은 파일 다시 선택 가능하도록
 });
 ccRemove.addEventListener('click', ()=>{
-  const im = APP_DATA.images[idx];
+  const im = DOC.images[idx];
   im.src=''; im._natW=0; im._natH=0;
-  applyCardImg(idx); refreshImgCtrl();
+  applyCardImg(idx); refreshImgCtrl(); markDirty();
 });
 ccFit.addEventListener('click', ()=>{
-  const im = APP_DATA.images[idx];
+  const im = DOC.images[idx];
   im.fit = im.fit==='cover' ? 'contain' : 'cover';
-  applyCardImg(idx); refreshImgCtrl();
+  applyCardImg(idx); refreshImgCtrl(); markDirty();
 });
-ccZoom.addEventListener('input', e=>{ APP_DATA.images[idx].zoom = parseFloat(e.target.value); applyCardImg(idx); });
-ccPy.addEventListener('input', e=>{ APP_DATA.images[idx].py = parseFloat(e.target.value); applyCardImg(idx); });
-ccOverlay.addEventListener('input', e=>{ APP_DATA.images[idx].overlay = parseFloat(e.target.value); applyCardImg(idx); });
+ccZoom.addEventListener('input', e=>{ DOC.images[idx].zoom = parseFloat(e.target.value); applyCardImg(idx); markDirty(); });
+ccPx.addEventListener('input', e=>{ DOC.images[idx].px = parseFloat(e.target.value); applyCardImg(idx); markDirty(); });
+ccPy.addEventListener('input', e=>{ DOC.images[idx].py = parseFloat(e.target.value); applyCardImg(idx); markDirty(); });
+ccOverlay.addEventListener('input', e=>{ DOC.images[idx].overlay = parseFloat(e.target.value); applyCardImg(idx); markDirty(); });
 
 prevBtn.onclick = ()=>show(idx-1);
 nextBtn.onclick = ()=>show(idx+1);
@@ -1176,7 +1225,7 @@ window.addEventListener('keydown', e=>{
   if(e.key==='ArrowLeft') show(idx-1);
   if(e.key==='ArrowRight') show(idx+1);
 });
-show(0);
+renderDeck();                              // 초기 렌더 (카드 생성 + 이미지 로드 + show)
 
 /* ===== 미리보기 스케일(화면 폭에 맞춤) ===== */
 const viewport = document.getElementById('viewport');
@@ -1276,8 +1325,9 @@ document.getElementById('exportAll').onclick = async ()=>{
 
 /* ===== HTML 파일로 받기 (편집·이미지 상태를 그대로 저장) ===== */
 document.getElementById('downloadHtml').onclick = function(){
-  // 편집 내용은 input 이벤트로 이미 APP_DATA에 반영됨. 내부 캐시(_natW 등)만 제거.
-  const clean = JSON.parse(JSON.stringify(APP_DATA, (k,v)=> (k==='_natW'||k==='_natH') ? undefined : v));
+  // 편집 내용은 input 이벤트로 이미 DOC에 반영됨. 내부 캐시(_natW 등)만 제거.
+  DOC.meta.updatedAt = Date.now();
+  const clean = JSON.parse(JSON.stringify(DOC, (k,v)=> (k==='_natW'||k==='_natH') ? undefined : v));
   const dataJs = '/*__DATA_START__*/\nconst APP_DATA = ' + JSON.stringify(clean) + ';\n/*__DATA_END__*/';
   const out = ORIGINAL_HTML.replace(/\/\*__DATA_START__\*\/[\s\S]*?\/\*__DATA_END__\*\//, function(){ return dataJs; });
   const blob = new Blob([out], {type:'text/html;charset=utf-8'});
