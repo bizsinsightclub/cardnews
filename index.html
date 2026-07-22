@@ -614,7 +614,10 @@
     <div class="paste-box">
       <div class="paste-head">
         <b>📋 텍스트로 카드뉴스 만들기</b>
-        <button class="btn sm2" id="pasteClose">✕ 닫기</button>
+        <div style="display:flex; gap:8px; align-items:center">
+          <button class="btn sm2" id="pastePrompt" title="이 프롬프트와 원고를 ChatGPT·Gemini·Claude에 붙여넣으면 아래 형식에 맞는 원고를 받을 수 있어요">🤖 AI 프롬프트 복사</button>
+          <button class="btn sm2" id="pasteClose">✕ 닫기</button>
+        </div>
       </div>
       <textarea id="pasteText" placeholder="원고를 통째로 붙여넣으세요.
 
@@ -624,7 +627,7 @@
 ※ 로 시작하는 줄     : 작은 주석으로 변환
 숫자+단위(배·%·mm…)  : 포인트색 자동 강조"></textarea>
       <div class="paste-foot">
-        <span class="paste-hint">붙여넣은 뒤 버튼을 누르면 카드가 자동 배치되고,<br>넘치는 카드는 글자 크기를 자동으로 맞춥니다.</span>
+        <span class="paste-hint">붙여넣은 뒤 버튼을 누르면 카드가 자동 배치되고, 넘치는 카드는 글자 크기를 자동으로 맞춥니다.<br>💡 <b>🤖 AI 프롬프트 복사</b> → ChatGPT·Gemini·Claude에 원고와 함께 붙여넣기 → 결과를 이 창에 붙여넣기</span>
         <div class="spacer"></div>
         <button class="btn" id="pasteReplace" title="현재 문서를 이 내용으로 교체 (교체 전 자동 백업)">현재 문서에 덮어쓰기</button>
         <button class="btn primary" id="pasteNew">새 문서로 만들기</button>
@@ -2905,9 +2908,44 @@ async function autoFitAll(){
   markDirty();
 }
 
+/* --- AI 정리 프롬프트 (파서 문법을 LLM에 지시 — GPT/Gemini/Claude 공용) --- */
+const LLM_PROMPT = `당신은 병원·약국 SNS 카드뉴스 편집자입니다. 아래 [원고]를 카드뉴스 대본으로 재구성해 주세요.
+
+출력 규칙 (반드시 그대로 지켜주세요):
+1. 코드블록·마크다운·번호 매기기 없이 일반 텍스트로만 출력합니다.
+2. 카드와 카드 사이는 "⸻" 기호 한 줄로 구분합니다.
+3. 첫 카드는 표지입니다: 호기심을 끄는 한 문장 헤드라인(쉼표로 끊어도 좋음), 줄바꿈 후 부제 1문장.
+4. 이후 각 카드는
+   - 첫 줄: 카드 제목 (30자 이내, 질문형 환영)
+   - 다음 줄부터: 본문 (한 줄 40자 이내로 줄바꿈, 카드당 300자 이내)
+5. 나열·항목은 줄 맨 앞에 "✔ "를 붙입니다 (한 카드에 최대 5개).
+6. 출처·주의·부가 설명은 줄 맨 앞에 "※ "를 붙입니다.
+7. 마지막 카드는 "📌 결론" 제목으로 핵심 요약과 독자 행동 유도 1줄을 넣습니다.
+8. 숫자·통계는 단위와 함께 그대로 보존합니다 (예: 1.23mm, 약 2배 — 자동으로 강조됩니다).
+9. 원고에 없는 사실을 만들지 마세요. 전체 분량은 표지 포함 4~8카드.
+
+[원고]
+(여기에 원고를 붙여넣으세요)`;
+
 /* --- 모달 배선 --- */
 const pastePanel = document.getElementById('pastePanel');
 const pasteTextEl = document.getElementById('pasteText');
+document.getElementById('pastePrompt').addEventListener('click', async ()=>{
+  let ok = false;
+  try{ await navigator.clipboard.writeText(LLM_PROMPT); ok = true; }
+  catch(_){
+    // 클립보드 API 불가 시 폴백
+    const ta = document.createElement('textarea');
+    ta.value = LLM_PROMPT;
+    ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    try{ ok = document.execCommand('copy'); }catch(_2){}
+    ta.remove();
+  }
+  toast(ok ? '프롬프트를 복사했어요 — AI에 원고와 함께 붙여넣고, 결과를 이 창에 다시 붙여넣으세요'
+           : '⚠ 복사에 실패했어요 — 브라우저 권한을 확인해 주세요');
+});
 document.getElementById('pasteBtn').addEventListener('click', ()=>{
   closePanels();
   pastePanel.classList.add('on');
