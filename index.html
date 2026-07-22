@@ -865,8 +865,9 @@ function renderDeck(){
     deck.appendChild(el);
   }
   cards = [...deck.querySelectorAll('.card')];
-  // 편집 리스너·contenteditable 재바인딩
+  // 편집 리스너·contenteditable 재바인딩 (+ 과거 버전이 남긴 비정상 구조 정상화)
   deck.querySelectorAll('[data-edit]').forEach(el=>{
+    if(normalizeField(el)) writeBack(el);
     el.addEventListener('input', ()=>{ writeBack(el); noteTyping(el); });
     el.setAttribute('contenteditable', editing ? 'true' : 'false');
   });
@@ -1085,11 +1086,13 @@ function styleCtxFromEl(el){
   return p;
 }
 // '순수 스타일 요소'(파싱 시 흡수 가능) 판정
+// data-* 속성은 전부 흡수 대상 (오토핏 data-fit 등이 구조 컨테이너로 남아
+// 스타일을 숨기면 "일괄 수정해도 그 부분만 멈추는" 버그가 됨 — L22)
 function isPureStyleEl(el){
   const tn = el.tagName;
   if(!RT_TAGSTYLE[tn] && tn !== 'SPAN') return false;
   for(const a of el.attributes){
-    if(!['class','style','data-fmt','data-size'].includes(a.name)) return false;
+    if(a.name !== 'class' && a.name !== 'style' && !a.name.startsWith('data-')) return false;
   }
   for(const c of el.classList){ if(!RT_TOKENS.includes(c)) return false; }
   if(styleCtxFromEl(el)._impure) return false;
@@ -1205,39 +1208,96 @@ function serializeRuns(runs){
 }
 
 /* --- 적용 진입점 (인라인 서식) --- */
-function applyInline(patch){
+// 선택과 교차하는 편집 필드들 (문서 순서) — 제목+본문을 걸친 선택도 전부 적용 (L22)
+function hostsInRange(range){
+  const hosts = [];
+  deck.querySelectorAll('[data-edit]').forEach(h=>{
+    try{ if(range.intersectsNode(h)) hosts.push(h); }catch(_){}
+  });
+  return hosts;
+}
+// 필드 구조 정상화: 인라인 요소(span 등)가 블록(DIV)을 감싼 비정상 구조를 해소.
+// 그런 span은 문단(paraOf)과 호스트 사이에 끼어 엔진이 볼 수 없는 사각지대가 됨 (L22).
+// 인라인 스타일은 자식 DIV로 내려보내(상속 유지) 벗긴다. 텍스트 노드 identity가
+// 보존되므로 진행 중인 Range 오프셋에는 영향 없음.
+function normalizeField(host){
+  let changed = false, again = true;
+  const pushStylesDown = (from, to)=>{
+    for(let i = 0; i < from.style.length; i++){
+      const prop = from.style[i];
+      if(!to.style.getPropertyValue(prop)) to.style.setProperty(prop, from.style.getPropertyValue(prop));
+    }
+  };
+  const unwrap = el=>{
+    const p = el.parentNode;
+    while(el.firstChild) p.insertBefore(el.firstChild, el);
+    p.removeChild(el);
+  };
+  while(again){
+    again = false;
+    // 1) span이 블록(DIV)을 감싼 비정상 구조: 스타일을 자식으로 내리고 벗김
+    for(const sp of host.querySelectorAll('span')){
+      if(!sp.querySelector(':scope > div')) continue;
+      for(const ch of sp.children) pushStylesDown(sp, ch);
+      unwrap(sp);
+      changed = true; again = true;
+      break;
+    }
+    if(again) continue;
+    // 2) div[data-line]의 유일한 자식이 또 다른 DIV: 중복 래핑 평탄화
+    for(const dl of host.querySelectorAll('div[data-line]')){
+      const kids = [...dl.childNodes].filter(n=>!(n.nodeType === 3 && !n.nodeValue.trim()));
+      if(kids.length === 1 && kids[0].nodeType === 1 && kids[0].tagName === 'DIV'){
+        pushStylesDown(dl, kids[0]);
+        unwrap(dl);
+        changed = true; again = true;
+        break;
+      }
+    }
+  }
+  return changed;
+}
+// patch: run 패치(객체|함수) · paraFn: 문단별 후처리(문단 스타일 리셋 등, 같은 undo 단위)
+function applyInline(patch, paraFn){
   if(!editing){ toast('편집 모드를 먼저 켜세요'); return; }
   const sel = useSaved();
   if(!sel || !sel.rangeCount){ toast('글자를 드래그해 선택하세요'); return; }
   const range = sel.getRangeAt(0);
   if(range.collapsed){ toast('수정할 글자를 먼저 선택하세요'); return; }
-  const hostS = editableHost(range.startContainer);
-  const hostE = editableHost(range.endContainer);
-  if(!hostS || hostS !== hostE){ toast('편집 가능한 한 영역 안에서 선택해 주세요'); return; }
-  const host = hostS;
-  const paras = parasInRange(range, host);
-  if(!paras.length){ toast('수정할 글자를 먼저 선택하세요'); return; }
+  const hosts = hostsInRange(range);
+  if(!hosts.length){ toast('편집 가능한 글자를 선택하세요'); return; }
 
   commitTyping();                                  // 타이핑 undo 단위 확정
-  const before = host.innerHTML;
-  for(const p of paras){
-    p.el.innerHTML = serializeRuns(patchRange(parseRuns(p.el), p.start, p.end, patch));
+  hosts.forEach(normalizeField);                   // 비정상 구조(span>div) 선처리
+  const items = [];
+  let firstP = null, lastP = null;
+  for(const host of hosts){
+    const paras = parasInRange(range, host);
+    if(!paras.length) continue;
+    const before = host.innerHTML;
+    for(const p of paras){
+      p.el.innerHTML = serializeRuns(patchRange(parseRuns(p.el), p.start, p.end, patch));
+      if(paraFn) paraFn(p.el, host);
+    }
+    const after = host.innerHTML;
+    if(before !== after){
+      items.push({ path: host.dataset.edit, before, after });
+      lastCommitted.set(host.dataset.edit, after);
+    }
+    if(!firstP) firstP = paras[0];
+    lastP = paras[paras.length - 1];
+    writeBack(host);
   }
-  const after = host.innerHTML;
-  if(before !== after){
-    pushUndo({ path: host.dataset.edit, before, after });
-    lastCommitted.set(host.dataset.edit, after);
-  }
+  if(!firstP){ toast('수정할 글자를 먼저 선택하세요'); return; }
+  if(items.length) pushUndo({ items });            // 일괄 적용 = Ctrl+Z 한 번
   // 같은 글자 범위로 선택 복원
-  const first = paras[0], last = paras[paras.length-1];
-  const rs = rangeFromOffsets(first.el, first.start, first.start);
-  const re = rangeFromOffsets(last.el, last.end, last.end);
+  const rs = rangeFromOffsets(firstP.el, firstP.start, firstP.start);
+  const re = rangeFromOffsets(lastP.el, lastP.end, lastP.end);
   const nr = document.createRange();
   nr.setStart(rs.startContainer, rs.startOffset);
   nr.setEnd(re.endContainer, re.endOffset);
   sel.removeAllRanges(); sel.addRange(nr);
-  savedRange = nr.cloneRange(); savedHost = host;
-  writeBack(host);
+  savedRange = nr.cloneRange(); savedHost = hosts[0];
   updateFmtState();
 }
 
@@ -1247,38 +1307,80 @@ function blockTargets(){
   const sel = useSaved();
   if(!sel || !sel.rangeCount){ toast('문단을 먼저 클릭하세요'); return null; }
   const range = sel.getRangeAt(0);
-  const host = editableHost(range.startContainer);
-  if(!host){ toast('편집 가능한 문단을 클릭하세요'); return null; }
-  let paras;
+  const groups = [];                                // [{host, paras}]
   if(range.collapsed){
-    let p = paraOf(range.startContainer, host);
-    paras = [p];
+    const host = editableHost(range.startContainer);
+    if(!host){ toast('편집 가능한 문단을 클릭하세요'); return null; }
+    normalizeField(host);
+    groups.push({ host, paras: [paraOf(range.startContainer, host)] });
   } else {
-    paras = parasInRange(range, host).map(p=>p.el);
-    if(!paras.length) paras = [paraOf(range.startContainer, host)];
+    hostsInRange(range).forEach(normalizeField);
+    for(const host of hostsInRange(range)){
+      let paras = parasInRange(range, host).map(p=>p.el);
+      if(!paras.length && host === editableHost(range.startContainer)){
+        paras = [paraOf(range.startContainer, host)];
+      }
+      if(paras.length) groups.push({ host, paras });
+    }
+    if(!groups.length){ toast('편집 가능한 문단을 클릭하세요'); return null; }
   }
   // 호스트 직속 서식은 writeBack(innerHTML만 저장)에서 유실 → 내용 전체를 div로 감싼 뒤 적용
-  paras = paras.map(p=>{
-    if(p !== host) return p;
-    const wrap = document.createElement('div');
-    wrap.dataset.line = '';
-    while(host.firstChild) wrap.appendChild(host.firstChild);
-    host.appendChild(wrap);
-    return wrap;
-  });
-  return { host, paras };
+  // (이미 단일 div[data-line]이면 재사용 — 중복 래핑 방지)
+  for(const g of groups){
+    g.paras = g.paras.map(p=>{
+      if(p !== g.host) return p;
+      const kids = [...g.host.childNodes].filter(n=>!(n.nodeType === 3 && !n.nodeValue.trim()));
+      if(kids.length === 1 && kids[0].nodeType === 1 && kids[0].tagName === 'DIV' && kids[0].hasAttribute('data-line')){
+        return kids[0];
+      }
+      const wrap = document.createElement('div');
+      wrap.dataset.line = '';
+      while(g.host.firstChild) wrap.appendChild(g.host.firstChild);
+      g.host.appendChild(wrap);
+      return wrap;
+    });
+  }
+  return groups;
 }
 function applyBlockStyle(fn){
-  const t = blockTargets(); if(!t) return;
+  const groups = blockTargets(); if(!groups) return;
   commitTyping();
-  const before = t.host.innerHTML;
-  t.paras.forEach(fn);
-  const after = t.host.innerHTML;
-  if(before !== after){
-    pushUndo({ path: t.host.dataset.edit, before, after });
-    lastCommitted.set(t.host.dataset.edit, after);
+  // DOM 이동으로 선택이 무너지지 않게 글자 오프셋을 먼저 기억 (첫/끝 문단 기준)
+  const sel = getSelection();
+  const hadRange = sel.rangeCount && savedRange;
+  let selInfo = null;
+  if(hadRange){
+    const g0 = groups[0], gN = groups[groups.length - 1];
+    const p0 = g0.paras[0], pN = gN.paras[gN.paras.length - 1];
+    const r = savedRange;
+    const s = (p0.contains(r.startContainer) || p0 === r.startContainer)
+      ? charOffset(p0, r.startContainer, r.startOffset) : 0;
+    const e = (pN.contains(r.endContainer) || pN === r.endContainer)
+      ? charOffset(pN, r.endContainer, r.endOffset) : pN.textContent.length;
+    selInfo = { p0, pN, s, e };
   }
-  writeBack(t.host);
+  const items = [];
+  for(const g of groups){
+    const before = g.host.innerHTML;
+    g.paras.forEach(fn);
+    const after = g.host.innerHTML;
+    if(before !== after){
+      items.push({ path: g.host.dataset.edit, before, after });
+      lastCommitted.set(g.host.dataset.edit, after);
+    }
+    writeBack(g.host);
+  }
+  if(items.length) pushUndo({ items });            // 일괄 적용 = Ctrl+Z 한 번
+  // 선택 복원 (연속 적용 시 두 번째부터 무너지는 버그 방지)
+  if(selInfo && document.contains(selInfo.p0) && document.contains(selInfo.pN)){
+    const rs = rangeFromOffsets(selInfo.p0, selInfo.s, selInfo.s);
+    const re = rangeFromOffsets(selInfo.pN, selInfo.e, selInfo.e);
+    const nr = document.createRange();
+    nr.setStart(rs.startContainer, rs.startOffset);
+    nr.setEnd(re.endContainer, re.endOffset);
+    sel.removeAllRanges(); sel.addRange(nr);
+    savedRange = nr.cloneRange();
+  }
   updateFmtState();
 }
 
@@ -1288,7 +1390,18 @@ function applySize(name){
   applyInline({ fs: v[0], fw: v[1] });
 }
 function applyColor(cls){ applyInline({ color: cls }); }
-function clearFormat(){ applyInline(Object.assign({}, RT_EMPTY)); }
+// 서식 지우기 = 인라인 런 + 문단 스타일(정렬·줄간격·자간·오토핏 크기) 전면 리셋 → 템플릿 기본 복귀
+function clearFormat(){
+  applyInline(Object.assign({}, RT_EMPTY), (para, host)=>{
+    if(para === host) return;                      // 호스트 자체 스타일은 저장 밖 (L20)
+    para.style.textAlign = '';
+    para.style.lineHeight = '';
+    para.style.letterSpacing = '';
+    para.style.fontSize = '';
+    if(para.getAttribute('style') === '') para.removeAttribute('style');
+    delete para.dataset.fit;
+  });
+}
 function blockBasePx(el){
   const v = parseFloat(getComputedStyle(el).fontSize);
   return isNaN(v) ? 44 : v;
@@ -1322,7 +1435,8 @@ let typingTimer = null, composing = false;
 let updateFmtState = function(){};                  // 툴바 섹션에서 실제 구현으로 재정의
 
 function pushUndo(e){
-  undoStack.push(e);
+  // 복합 {items:[{path,before,after}]} 또는 단일 {path,before,after} 허용
+  undoStack.push(e.items ? e : { items: [e] });
   if(undoStack.length > UNDO_CAP) undoStack.shift();
   redoStack.length = 0;
   markDirty();
@@ -1363,7 +1477,7 @@ function doUndo(){
   commitTyping();
   const e = undoStack.pop();
   if(!e){ toast('되돌릴 내용이 없어요'); return; }
-  applyUndoEntry(e.path, e.before);
+  for(const it of e.items) applyUndoEntry(it.path, it.before);
   redoStack.push(e);
   updateFmtState();
 }
@@ -1371,7 +1485,7 @@ function doRedo(){
   commitTyping();
   const e = redoStack.pop();
   if(!e){ toast('다시 실행할 내용이 없어요'); return; }
-  applyUndoEntry(e.path, e.after);
+  for(const it of e.items) applyUndoEntry(it.path, it.after);
   undoStack.push(e);
   updateFmtState();
 }
@@ -1598,6 +1712,11 @@ function stepLetterSpacing(dir){
     let nv = Math.round((cur + dir * 0.01) * 1000) / 1000;
     nv = Math.max(-0.1, Math.min(0.5, nv));
     p.style.letterSpacing = nv + 'em';
+    // 런(스팬)에 남은 자간이 문단 값을 가리지 않게 세척 (L22)
+    const runs = parseRuns(p);
+    if(runs.some(r=>r.ls)){
+      p.innerHTML = serializeRuns(runs.map(r=>r.ls ? Object.assign({}, r, { ls:null }) : r));
+    }
   });
 }
 document.getElementById('lhUp').addEventListener('click', ()=>stepLineHeight(1));
@@ -2657,7 +2776,9 @@ function autoFitCard(i){
   if(!main || !qb) return;
   const wasActive = card.classList.contains('active');
   if(!wasActive) card.classList.add('active');
-  // 이전 오토핏 초기화 후 측정
+  // 이전 오토핏 초기화 후 측정 — best effort:
+  // 서식 엔진이 data-fit 스팬을 흡수(직렬화 시 마커 소실)했을 수 있으나,
+  // 오토핏은 텍스트 생성 직후에만 실행되므로 누적 축소 위험은 없음
   [qt, qb].forEach(h=>h && h.querySelectorAll('[data-fit]').forEach(el=>{
     if(el.dataset.fitWrap){ const p = el.parentNode; while(el.firstChild) p.insertBefore(el.firstChild, el); p.removeChild(el); }
     else { el.style.fontSize = ''; delete el.dataset.fit; }
